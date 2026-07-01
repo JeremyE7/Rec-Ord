@@ -782,13 +782,12 @@ function renderGridCell(
     .join(" ");
   cell.dataset.recordId = record.id;
   if (isCurrent) cell.dataset.currentRecord = "true";
-  // The current record's cell shares the focus card's `view-transition-name`
-  // so the browser morphs the big card into this small cell (and vice versa
-  // when the user pinches back). The size + position interpolation IS the
-  // "shrink" effect — the browser handles it automatically.
-  if (isCurrent) {
-    cell.style.viewTransitionName = "record-card";
-  }
+  // No `view-transition-name` on the cell. The grid transition is a simple
+  // root crossfade — no shared element morph. The previous "shrink" effect
+  // (the browser interpolating the big focus card into this small row)
+  // used the browser's automatic size/position interpolation, which has
+  // an internal timing that produces a visible wobble on a 400px → 60px
+  // size change. A clean root crossfade avoids it entirely.
 
   const latest = latestEntry(record);
   const previous = previousEntry(record);
