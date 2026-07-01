@@ -745,23 +745,35 @@ function renderGrid(state: AppState): HTMLElement {
   title.textContent = "ALL RECORDS";
 
   const grid = document.createElement("div");
-  grid.className =
-    "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full";
+  grid.className = "w-full flex flex-col";
 
-  for (const record of state.records) {
-    grid.append(renderGridCell(record, record.id === state.currentRecordId));
-  }
+  const records = state.records;
+  records.forEach((record, i) => {
+    const isLast = i === records.length - 1;
+    grid.append(
+      renderGridCell(record, record.id === state.currentRecordId, isLast),
+    );
+  });
 
   section.append(title, grid);
   return section;
 }
 
-function renderGridCell(record: Record, isCurrent: boolean): HTMLElement {
+function renderGridCell(
+  record: Record,
+  isCurrent: boolean,
+  isLast: boolean,
+): HTMLElement {
   const cell = document.createElement("button");
   cell.type = "button";
-  cell.className =
-    "text-left p-6 border border-line bg-bg hover:border-accent transition-colors " +
-    "flex flex-col gap-2";
+  cell.className = [
+    "group flex items-baseline justify-between gap-6 py-5 w-full text-left",
+    "transition-colors duration-200 cursor-pointer",
+    isLast ? "" : "border-b border-line/40",
+    "hover:bg-line/[0.04]",
+  ]
+    .filter(Boolean)
+    .join(" ");
   cell.dataset.recordId = record.id;
   if (isCurrent) cell.dataset.currentRecord = "true";
   // The current record's cell shares the focus card's `view-transition-name`
@@ -772,37 +784,56 @@ function renderGridCell(record: Record, isCurrent: boolean): HTMLElement {
     cell.style.viewTransitionName = "record-card";
   }
 
-  // Name
+  const latest = latestEntry(record);
+  const previous = previousEntry(record);
+  const n = record.entries.length;
+
+  // Left side: name (small, uppercase) + date (tiny, more muted)
+  const left = document.createElement("div");
+  left.className = "flex flex-col gap-1 min-w-0";
+
   const name = document.createElement("span");
   name.className =
-    "font-body font-semibold text-sm tracking-[0.1em] uppercase text-ink";
+    "font-body font-semibold text-[0.6875rem] tracking-[0.2em] uppercase text-ink-muted";
   name.textContent = record.name;
+  left.append(name);
 
-  // Latest value + unit (big)
-  const valueWrap = document.createElement("span");
-  valueWrap.className =
-    "font-display font-extrabold text-3xl text-accent tabular-nums";
-  const latest = latestEntry(record);
-  valueWrap.textContent = latest
+  const dateLine = document.createElement("span");
+  dateLine.className =
+    "font-body text-[0.5625rem] tracking-[0.15em] uppercase text-ink-muted/60";
+  if (latest) {
+    const rel = formatRelativeDate(latest.date).toLowerCase();
+    dateLine.textContent = `${rel} · ${n} ${n === 1 ? "entry" : "entries"}`;
+  } else {
+    dateLine.textContent = "—";
+  }
+  left.append(dateLine);
+
+  // Right side: value + unit (big, yellow, display font — the hero)
+  // + delta (small, accent, tabular nums) below
+  const right = document.createElement("div");
+  right.className = "flex flex-col items-end gap-1 shrink-0";
+
+  const valueEl = document.createElement("span");
+  valueEl.className =
+    "font-display font-extrabold text-4xl text-accent tabular-nums leading-none " +
+    "transition-transform duration-200 group-hover:scale-[1.03] origin-right";
+  valueEl.textContent = latest
     ? `${formatValue(latest.value)} ${record.unit}`
     : "—";
+  right.append(valueEl);
 
-  // Date — uses the same relative format as the entries history list
-  // ("TODAY" / "YESTERDAY" / "ND AGO" / "1W AGO" / "MON DD") so the
-  // language stays consistent across the app.
-  const date = document.createElement("span");
-  date.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase text-ink-muted opacity-70";
-  date.textContent = latest ? formatRelativeDate(latest.date) : "";
+  const deltaEl = document.createElement("span");
+  deltaEl.className =
+    "font-body text-[0.6875rem] tracking-[0.15em] uppercase tabular-nums text-accent/70";
+  if (latest && previous) {
+    deltaEl.textContent = formatDelta(latest.value, previous.value, record.unit);
+  } else {
+    deltaEl.textContent = "—";
+  }
+  right.append(deltaEl);
 
-  // Count
-  const count = document.createElement("span");
-  count.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase text-ink-muted opacity-50";
-  const n = record.entries.length;
-  count.textContent = `${n} ${n === 1 ? "ENTRY" : "ENTRIES"}`;
-
-  cell.append(name, valueWrap, date, count);
+  cell.append(left, right);
   return cell;
 }
 
