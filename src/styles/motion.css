@@ -1,0 +1,213 @@
+/* =============================================================================
+ * rec-ord — Motion system
+ *
+ * Animations for the View Transitions API. The `commit()` helper in
+ * `motion.ts` sets `data-transition="<name>"` on `<html>` and triggers
+ * `document.startViewTransition`. The rules below key on that attribute
+ * to pick the right keyframes for each semantic case.
+ *
+ * Base easing: cubic-bezier(0.34, 1.56, 0.64, 1) — a "back-out" spring
+ * with subtle overshoot, the visual signature of the app.
+ *
+ * Base duration: 0.42s. Long enough that the overshoot is visible but
+ * short enough to feel responsive. The single exception is the default
+ * root crossfade (0.28s) which is a more neutral baseline.
+ *
+ * Under `prefers-reduced-motion: reduce`, all spring overshoots are
+ * disabled and durations collapse to 0.01s (effectively instant, but
+ * still routed through the View Transitions API so the rest of the app
+ * continues to work).
+ * ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+ * Long-press press-signal class (added to the focus card after 250ms of
+ * holding). Subtle scale-down + opacity dip signals "the press is being
+ * detected" without overcommitting — the user still has 150ms to decide
+ * to swipe instead.
+ * --------------------------------------------------------------------------- */
+.is-pressing {
+  transform: scale(0.97);
+  opacity: 0.92;
+  transition:
+    transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * Default root crossfade (no data-transition set, or "fade")
+ * --------------------------------------------------------------------------- */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Default crossfade for all named groups: a quick, almost-instant
+ * crossfade. The named groups (record-card, hero, new-record, grid) use
+ * this baseline; the *root* gets the more elaborate slide/scale below. */
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * nav-vertical: focus → next/previous record (vertical slide)
+ * --------------------------------------------------------------------------- */
+[data-transition="nav-vertical"]::view-transition-old(root) {
+  animation: vt-slide-up-out 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+[data-transition="nav-vertical"]::view-transition-new(root) {
+  animation: vt-slide-up-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes vt-slide-up-out {
+  to {
+    transform: translateY(-100%);
+    opacity: 0.6;
+  }
+}
+@keyframes vt-slide-up-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0.6;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * push-horizontal-in: focus → new-record form (push from right)
+ * --------------------------------------------------------------------------- */
+[data-transition="push-horizontal-in"]::view-transition-old(root) {
+  animation: vt-push-left-out 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+[data-transition="push-horizontal-in"]::view-transition-new(root) {
+  animation: vt-push-right-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes vt-push-left-out {
+  to {
+    transform: translateX(-30%);
+    opacity: 0.7;
+  }
+}
+@keyframes vt-push-right-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * push-horizontal-out: new-record → back to focus (mirror)
+ * --------------------------------------------------------------------------- */
+[data-transition="push-horizontal-out"]::view-transition-old(root) {
+  animation: vt-push-right-out 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+[data-transition="push-horizontal-out"]::view-transition-new(root) {
+  animation: vt-push-left-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes vt-push-right-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes vt-push-left-in {
+  from {
+    transform: translateX(-30%);
+    opacity: 0.7;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * expand: focus → expanded focus (the card grows in place; no root slide)
+ * --------------------------------------------------------------------------- */
+[data-transition="expand"]::view-transition-old(root),
+[data-transition="expand"]::view-transition-new(root) {
+  animation-duration: 0.42s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * collapse: expanded focus → focus (same as expand; just a distinct name
+ * so the two cases are auditable separately in DevTools)
+ * --------------------------------------------------------------------------- */
+[data-transition="collapse"]::view-transition-old(root),
+[data-transition="collapse"]::view-transition-new(root) {
+  animation-duration: 0.42s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * scale-morph: focus ↔ grid.
+ * The focus card and the corresponding grid cell share the
+ * `view-transition-name: record-card` — the browser automatically
+ * interpolates the size and position, so the big card morphs into
+ * the small cell (the "shrink" effect). The root just crossfades so
+ * the other grid cells appear smoothly underneath.
+ * --------------------------------------------------------------------------- */
+[data-transition="scale-morph"]::view-transition-old(root),
+[data-transition="scale-morph"]::view-transition-new(root) {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * fade: a neutral crossfade (used for non-semantic re-renders, e.g. the
+ * inline add-entry form opening/closing, the delete-confirm label flip)
+ * --------------------------------------------------------------------------- */
+[data-transition="fade"]::view-transition-old(root),
+[data-transition="fade"]::view-transition-new(root) {
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* -----------------------------------------------------------------------------
+ * Edge hint for the focus view: a small text whisper of the adjacent
+ * record's hero (value + unit), positioned just below (next) or just
+ * above (prev) the current focus card. The hint is invisible by default
+ * (opacity: 0) — the gesture handler fades it in past 50% of the swipe
+ * commit distance so the user gets a subtle preview of what's coming,
+ * without an always-visible card stack on screen.
+ *
+ * The hint is `aria-hidden="true"` in the DOM and `pointer-events: none`
+ * here, so it never affects screen readers or gestures. The section
+ * that contains it is `position: relative` (set inline in render.ts),
+ * so the hint's `top` / `bottom` values anchor to the section's box.
+ * --------------------------------------------------------------------------- */
+.focus-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--color-ink-muted);
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.focus-hint--next {
+  bottom: -2.5rem;
+}
+.focus-hint--prev {
+  top: -2.5rem;
+}
+
+/* -----------------------------------------------------------------------------
+ * Reduced motion: collapse to near-instant, no overshoot, no movement.
+ * --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01s !important;
+    animation-timing-function: linear !important;
+  }
+  [data-transition] ::view-transition-old(root),
+  [data-transition] ::view-transition-new(root) {
+    animation: none !important;
+  }
+  .is-pressing {
+    transform: none;
+    opacity: 1;
+    transition: none;
+  }
+}
