@@ -142,15 +142,37 @@
  * the small cell (the "shrink" effect). The root just crossfades so
  * the other grid cells appear smoothly underneath.
  *
- * Easing note: this is OPACITY, not a transform. A spring with
+ * Easing note: the root is OPACITY, not a transform — a spring with
  * overshoot (1.56) on opacity makes the browser clamp to [0,1] and
  * oscillate, which reads as a "tremble". Use a clean ease-out here.
- * (The spring with overshoot stays on the expand/collapse transforms
- * because the overshoot on scale/translate is what makes them feel
- * alive.)
+ * (The spring stays on the expand/collapse transforms because the
+ * overshoot on scale/translate is what makes them feel alive.)
+ *
+ * The shared-element group AND the grid's named pseudo-element also
+ * need an explicit ease-out. The browser's default animation for
+ * view-transition pseudo-elements has a subtle ease that, combined
+ * with the large size change (400px card → 60px row), produces a
+ * visible wobble. Overriding both with the same clean ease-out as
+ * the root, and centering the transform-origin, makes the morph feel
+ * like a single smooth contraction instead of a "shake".
  * --------------------------------------------------------------------------- */
 [data-transition="scale-morph"]::view-transition-old(root),
 [data-transition="scale-morph"]::view-transition-new(root) {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Shared element: the focus card morphs into the grid cell. */
+::view-transition-group(record-card) {
+  animation-duration: 0.32s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center;
+}
+
+/* Grid section's named pseudo-element — also pin to the same clean
+ * ease-out so it doesn't bounce independently of the root. */
+::view-transition-old(grid),
+::view-transition-new(grid) {
   animation-duration: 0.32s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
