@@ -162,19 +162,21 @@
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Shared element: the focus card morphs into the grid cell. */
+/* Shared element: the focus card morphs into the grid cell.
+ * Pin both the group AND the individual old/new pseudo-elements to
+ * the same clean ease-out so the browser's size/position interpolation
+ * and the crossfade use the same timing — no wobble from mismatched
+ * default animations. */
 ::view-transition-group(record-card) {
   animation-duration: 0.32s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transform-origin: center;
+  transform-origin: 50% 50%;
 }
-
-/* Grid section's named pseudo-element — also pin to the same clean
- * ease-out so it doesn't bounce independently of the root. */
-::view-transition-old(grid),
-::view-transition-new(grid) {
+::view-transition-old(record-card),
+::view-transition-new(record-card) {
   animation-duration: 0.32s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: 50% 50%;
 }
 
 /* -----------------------------------------------------------------------------

@@ -32,7 +32,6 @@ import { formatDelta, formatRelativeDate, formatValue, latestEntry, previousEntr
 const VT_HERO = "hero";
 const VT_RECORD_CARD = "record-card";
 const VT_NEW_RECORD = "new-record";
-const VT_GRID = "grid";
 
 /* ---------------------------------------------------------------------------
  * Local UI state (not persisted)
@@ -735,9 +734,16 @@ function renderNewRecord(): HTMLElement {
 
 function renderGrid(state: AppState): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-center gap-8";
+  section.className = "w-full max-w-7xl flex flex-col items-center gap-10";
   section.dataset.grid = "true";
-  section.style.viewTransitionName = VT_GRID;
+  // Intentionally NOT setting `viewTransitionName: VT_GRID` here. The
+  // grid section is part of the root transition (simple fade) — giving
+  // it its own named pseudo-element created an extra animated layer
+  // whose default timing didn't sync cleanly with the shared-element
+  // morph and the root fade, producing a visible wobble. Only the
+  // current record's cell carries the shared `view-transition-name`
+  // (set in `renderGridCell`), so the browser only has one element to
+  // morph: the big focus card into that one small row.
 
   const title = document.createElement("p");
   title.className =
