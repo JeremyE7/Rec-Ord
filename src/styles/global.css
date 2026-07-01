@@ -1,0 +1,112 @@
+/* =============================================================================
+ * rec-ord — Global Styles
+ * Design system: Apex Performance (dark, high-contrast, athletic)
+ * Stack: Tailwind CSS v4 (via @tailwindcss/vite). Tokens live in @theme.
+ * ============================================================================= */
+
+@import "tailwindcss";
+@import "./motion.css";
+
+/* -----------------------------------------------------------------------------
+ * Design Tokens (Tailwind v4 CSS-first config)
+ * These custom properties generate utility classes:
+ *   --color-*  ->  bg-*, text-*, border-*, divide-*, etc.
+ *   --font-*   ->  font-*
+ * ---------------------------------------------------------------------------- */
+@theme inline {
+  /* Surface */
+  --color-bg: #000000;
+  --color-surface: #122131;
+  --color-surface-low: #0d1c2d;
+  --color-line: #273647; /* borders / dividers */
+
+  /* Ink */
+  --color-ink: #d4e4fa;
+  --color-ink-muted: #94a3b8;
+
+  /* Brand accent (athletic yellow) */
+  --color-accent: #facc15;
+  --color-accent-deep: #eec200;
+
+  /* Atmospheric glow (used by BackgroundGlow orbs) */
+  --color-glow-a: rgba(250, 204, 21, 0.1);
+  --color-glow-b: rgba(250, 204, 21, 0.05);
+
+  /* Typography stacks */
+  --font-display: "Archivo Narrow", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+}
+
+/* -----------------------------------------------------------------------------
+ * Base / Reset
+ * ---------------------------------------------------------------------------- */
+@layer base {
+  html {
+    color-scheme: dark;
+    background-color: var(--color-bg);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * No scrollbars, anywhere.
+ *
+ * The app is a single-screen PWA — content is intentionally clipped at
+ * the viewport edges rather than scrollable. We lock `html, body` to
+ * the viewport size and hide the scrollbar across every browser engine
+ * (Firefox, legacy Edge/IE, WebKit/Blink).
+ * --------------------------------------------------------------------------- */
+@layer base {
+  html,
+  body {
+    overflow: hidden;
+    height: 100%;
+  }
+}
+
+html,
+body,
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
