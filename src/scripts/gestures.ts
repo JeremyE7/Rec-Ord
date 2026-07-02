@@ -70,6 +70,7 @@ const AXIS_LOCK_THRESHOLD = 12; // px
 const DRAG_OPACITY_DIVISOR = 400; // |dy|/400, capped at 0.4
 const DRAG_OPACITY_MAX = 0.4;
 const MAX_DRAG_DY = 500; // px — cap lastDy to prevent over-fling
+const ZOMBIE_THRESHOLD_MS = 1500; // pointers older than this are zombies
 const SPRING_LERP = 0.30; // spring stiffness (one subtle overshoot)
 const SPRING_VELOCITY_DECAY = 0.80; // damping tuned for a single bouncy overshoot
 const SPRING_SETTLE_THRESHOLD = 0.1; // px / (px/frame)
@@ -173,6 +174,15 @@ function isFormElement(target: EventTarget | null): boolean {
   return false;
 }
 
+/** True if the event originated inside a scrollable region (a list of
+ *  entries inside the expanded focus view, or the new-record form).
+ *  In those areas the user expects native vertical scrolling, so the
+ *  gesture handler should NOT capture the pointer. */
+function isInScrollRegion(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest(".scroll-region") !== null;
+}
+
 /** True if the target is a real button. */
 function isButton(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.tagName === "BUTTON";
@@ -249,6 +259,12 @@ function springBackDrag(root: HTMLElement): void {
   if (progressEl !== null) {
     progressEl.style.removeProperty("--swipe-progress");
   }
+  // Clear the swipe-hint-right so it slides back off-screen.
+  const hintEl = document.getElementById("swipe-hint-right");
+  if (hintEl !== null) {
+    hintEl.style.removeProperty("--swipe-hint-x");
+    hintEl.style.removeProperty("--swipe-hint-opacity");
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -278,6 +294,7 @@ export function attachGestures(opts: AttachOptions): () => void {
   // next animation frame, not on every pointermove event.
   let dragFrame: number | null = null;
   let lastDy = 0;
+  let lastDx = 0;
 
   const clearTimers = (): void => {
     if (state.longPressTimer !== null) {
@@ -320,26 +337,61 @@ export function attachGestures(opts: AttachOptions): () => void {
 
   const applyDragFrame = (): void => {
     dragFrame = null;
-    if (state.dragLocked !== "v") return;
+    if (state.dragLocked === null) return;
     // If the drag has ended (finger lifted) but the rAF was already
     // scheduled, bail out — the spring-back has taken over.
     if (!state.dragging) return;
     const card = findFocusCard(root);
     if (card === null) return;
-    // Cap lastDy to prevent over-fling.
-    const clampedDy = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, lastDy));
-    const absDy = Math.abs(clampedDy);
-    const opacity = 1 - Math.min(absDy / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
-    // Use translate3d for GPU compositing — eliminates jank on mobile.
-    card.style.transform = `translate3d(0, ${clampedDy}px, 0)`;
-    card.style.opacity = String(opacity);
-    // Swipe progress bar: set the CSS custom property on the fixed
-    // #swipe-progress element (lives in index.astro, anchored to the
-    // viewport bottom — independent of the focus card's position).
-    const progress = Math.min(absDy / PROGRESS_DISTANCE, 1);
-    const progressEl = document.getElementById("swipe-progress");
-    if (progressEl !== null) {
-      progressEl.style.setProperty("--swipe-progress", String(progress));
+    if (state.dragLocked === "v") {
+      // Cap lastDy to prevent over-fling.
+      const clampedDy = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, lastDy));
+      const absDy = Math.abs(clampedDy);
+      const opacity = 1 - Math.min(absDy / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
+      // Use translate3d for GPU compositing — eliminates jank on mobile.
+      card.style.transform = `translate3d(0, ${clampedDy}px, 0)`;
+      card.style.opacity = String(opacity);
+      // Swipe progress bar: set the CSS custom property on the fixed
+      // #swipe-progress element (lives in index.astro, anchored to the
+      // viewport bottom — independent of the focus card's position).
+      const progress = Math.min(absDy / PROGRESS_DISTANCE, 1);
+      const progressEl = document.getElementById("swipe-progress");
+      if (progressEl !== null) {
+        progressEl.style.setProperty("--swipe-progress", String(progress));
+      }
+    } else if (state.dragLocked === "h") {
+      // Horizontal live drag: animate the card so the user gets
+      // immediate feedback while the form slides in from the right.
+      // The opacity dips slightly to signal "this is a transition in
+      // progress" without making the card disappear.
+      const clampedDx = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, lastDx));
+      const absDx = Math.abs(clampedDx);
+      const opacity = 1 - Math.min(absDx / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
+      card.style.transform = `translate3d(${clampedDx}px, 0, 0)`;
+      card.style.opacity = String(opacity);
+      // Swipe-right hint: slide in from the left as the user drags
+      // right. Visible only while dragging, fully hidden at rest.
+      // The label position is driven by a CSS custom property so the
+      // gesture handler doesn't touch inline styles directly.
+      if (lastDx > 0) {
+        // Swiping right (toward new record).
+        const hintProgress = Math.min(absDx / PROGRESS_DISTANCE, 1);
+        const hintEl = document.getElementById("swipe-hint-right");
+        if (hintEl !== null) {
+          // At progress=0, x = -200px (fully off-screen left).
+          // At progress=1, x = 0 (in its resting position).
+          const x = -200 + hintProgress * 200;
+          hintEl.style.setProperty("--swipe-hint-x", `${x}px`);
+          hintEl.style.setProperty("--swipe-hint-opacity", String(hintProgress));
+        }
+      } else {
+        // Swiping left (would close new-record). No hint for that
+        // direction; clear the right-hint if it was visible.
+        const hintEl = document.getElementById("swipe-hint-right");
+        if (hintEl !== null) {
+          hintEl.style.setProperty("--swipe-hint-opacity", "0");
+        }
+      }
     }
   };
 
@@ -360,22 +412,36 @@ export function attachGestures(opts: AttachOptions): () => void {
 
     // Detect zombie pointers left over from a gesture that was interrupted
     // by a re-render. If the incoming pointerdown's ID is NOT in our
-    // pointers map, the entries that ARE in the map are stale (the
+    // pointers map, the entries that ARE in the map may be stale (the
     // browser no longer tracks them; the DOM elements that captured them
-    // have been replaced). Wipe them so the size-0 reset path runs.
+    // have been replaced) — BUT they may also be a live second finger
+    // arriving on a multi-touch gesture (e.g. pinch-out).
+    // Distinguish by recency: if every pointer in the map has a downTime
+    // older than ZOMBIE_THRESHOLD_MS, they're zombies from a previous
+    // gesture. If at least one is recent, it's an active second finger
+    // and we must KEEP the existing pointers intact.
     if (!state.pointers.has(e.pointerId)) {
-      state.pointers.clear();
-      state.dragLocked = null;
-      state.dragging = false;
-      state.pinchStartDist = null;
-      state.pinchFired = false;
-      state.captured = null;
-      state.capturedPointerId = null;
-      state.pressingElement = null;
-      if (dragFrame !== null) {
-        cancelAnimationFrame(dragFrame);
-        dragFrame = null;
+      const now = e.timeStamp;
+      const hasRecentPointer = Array.from(state.pointers.values()).some(
+        (p) => now - p.downTime < ZOMBIE_THRESHOLD_MS,
+      );
+      if (!hasRecentPointer) {
+        // True zombies — wipe everything.
+        state.pointers.clear();
+        state.dragLocked = null;
+        state.dragging = false;
+        state.pinchStartDist = null;
+        state.pinchFired = false;
+        state.captured = null;
+        state.capturedPointerId = null;
+        state.pressingElement = null;
+        if (dragFrame !== null) {
+          cancelAnimationFrame(dragFrame);
+          dragFrame = null;
+        }
       }
+      // else: this is a legitimate second pointer arriving on an
+      // active multi-touch gesture — keep the existing pointers.
     }
 
     // Reset state UNCONDITIONALLY on every first-pointerdown. This is the
@@ -427,10 +493,12 @@ export function attachGestures(opts: AttachOptions): () => void {
     };
     state.pointers.set(e.pointerId, p);
 
-    if (isFormElement(e.target) || isButton(e.target)) {
-      // Don't capture — let the form/button handle its own events. The
-      // pointer is still recorded in `state.pointers` so a second pointer
-      // arriving can start a pinch, but no capture, no long-press, no drag.
+    if (isFormElement(e.target) || isButton(e.target) || isInScrollRegion(e.target)) {
+      // Don't capture — let the form/button/scroll-region handle its
+      // own events. The pointer is still recorded in `state.pointers` so
+      // a second pointer arriving can start a pinch, but no capture, no
+      // long-press, no drag. This is how the entries list and the
+      // new-record form get native vertical scrolling on touch.
       return;
     }
 
@@ -523,11 +591,25 @@ export function attachGestures(opts: AttachOptions): () => void {
 
     // Axis lock — only lock once we're past the threshold; never re-lock.
     if (state.dragLocked === null && (absDx > AXIS_LOCK_THRESHOLD || absDy > AXIS_LOCK_THRESHOLD)) {
-      state.dragLocked = absDx > absDy ? "h" : "v";
-      // Set dragging=true at the moment the lock is acquired, not in
-      // applyDragFrame (which can run multiple times per frame and may
-      // run after the finger has already lifted).
-      if (state.dragLocked === "v") {
+      // In expanded view, only vertical drag is meaningful (swipe down
+      // collapses edit). Block horizontal axis-lock and vertical-up
+      // axis-lock in expanded mode so the swipe-to-records
+      // / swipe-to-new-record gestures don't fire from inside the
+      // expanded card.
+      if (getExpanded()) {
+        if (absDy > absDx && dy > 0) {
+          // Swipe down only — allowed.
+          state.dragLocked = "v";
+          state.dragging = true;
+        } else {
+          // Swipe up or horizontal: ignore the drag entirely.
+          return;
+        }
+      } else {
+        state.dragLocked = absDx > absDy ? "h" : "v";
+        // Set dragging=true at the moment the lock is acquired, not in
+        // applyDragFrame (which can run multiple times per frame and may
+        // run after the finger has already lifted).
         state.dragging = true;
       }
     }
@@ -536,8 +618,12 @@ export function attachGestures(opts: AttachOptions): () => void {
       // Cap lastDy to prevent over-fling.
       lastDy = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, dy));
       scheduleDragFrame();
+    } else if (state.dragLocked === "h") {
+      // Cap lastDx and schedule a frame so the live horizontal drag
+      // animation runs on the next rAF (GPU-composited translate3d).
+      lastDx = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, dx));
+      scheduleDragFrame();
     }
-    // Horizontal drag: no live visual (the push transition handles it).
   };
 
   const commitVertical = (dy: number, dt: number): boolean => {
@@ -561,7 +647,10 @@ export function attachGestures(opts: AttachOptions): () => void {
     const passesVelocity = dt > 0 && absDx / dt > SWIPE_VELOCITY;
     if (!passesDistance && !passesVelocity) return false;
     if (dx > 0) {
-      if (getView() === "focus") {
+      // Swipe right: open the new-record form, ONLY from collapsed
+      // focus view. In expanded view the gesture handler should have
+      // already blocked the axis-lock, but we double-check here.
+      if (getView() === "focus" && !getExpanded()) {
         const result = handlers.onSwipeRight?.();
         if (result === true) haptic();
         return result === true;
@@ -610,6 +699,12 @@ export function attachGestures(opts: AttachOptions): () => void {
       if (wasDragging || state.dragLocked !== null) {
         springBackDrag(root);
       }
+      // Reset the swipe-hint-right on cancel too.
+      const hintEl = document.getElementById("swipe-hint-right");
+      if (hintEl !== null) {
+        hintEl.style.removeProperty("--swipe-hint-x");
+        hintEl.style.removeProperty("--swipe-hint-opacity");
+      }
       releaseCapture();
       return;
     }
@@ -650,6 +745,12 @@ export function attachGestures(opts: AttachOptions): () => void {
       const progressEl = document.getElementById("swipe-progress");
       if (progressEl !== null) {
         progressEl.style.removeProperty("--swipe-progress");
+      }
+      // Reset the swipe-hint-right (the "NEW RECORD" label).
+      const hintEl = document.getElementById("swipe-hint-right");
+      if (hintEl !== null) {
+        hintEl.style.removeProperty("--swipe-hint-x");
+        hintEl.style.removeProperty("--swipe-hint-opacity");
       }
     }
 

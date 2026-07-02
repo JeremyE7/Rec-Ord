@@ -91,32 +91,64 @@
 }
 
 /* -----------------------------------------------------------------------------
- * No scrollbars, anywhere.
- *
- * The app is a single-screen PWA — content is intentionally clipped at
- * the viewport edges rather than scrollable. We lock `html, body` to
- * the viewport size and hide the scrollbar across every browser engine
- * (Firefox, legacy Edge/IE, WebKit/Blink).
+ * Layout: the app is a full-screen PWA, so html/body are locked to the
+ * viewport. Specific scrollable regions (the entries list inside the
+ * expanded focus view, and the new-record form) opt into scrolling by
+ * adding `overflow-y: auto` to themselves. The `touch-action: none` on
+ * body ensures native scroll/pinch-zoom don't fire on non-scrollable
+ * surfaces; scrollable regions override with `touch-action: pan-y` so
+ * the native scroll works there.
  * --------------------------------------------------------------------------- */
 @layer base {
   html,
   body {
-    overflow: hidden;
     height: 100%;
+    overflow: hidden;
   }
+}
+
+/* Scrollable regions opt into touch scrolling. */
+.scroll-region {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 html,
 body,
-* {
+*:not(.scroll-region):not(.scroll-region *) {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
 html::-webkit-scrollbar,
 body::-webkit-scrollbar,
-*::-webkit-scrollbar {
+*:not(.scroll-region):not(.scroll-region *)::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Scrollable regions get a thin, themed scrollbar so the user can see
+ * there's more content below. iOS Safari hides scrollbars during
+ * scroll regardless; this only shows them on platforms that respect
+ * `scrollbar-*` properties (desktop browsers mainly). */
+.scroll-region {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+.scroll-region::-webkit-scrollbar {
+  width: 6px;
+  display: block;
+}
+.scroll-region::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-region::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 3px;
+}
+.scroll-region::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-muted);
 }

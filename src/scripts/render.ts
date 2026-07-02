@@ -335,7 +335,13 @@ function renderFocusExpandedSection(
   state: AppState,
 ): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
+  // The section is a flex column with a constrained height so the
+  // inner entries list can scroll independently when there are many
+  // entries. The hero, the "+ NEW ENTRY" toggle, and the delete button
+  // are pinned to the top/bottom and don't scroll.
+  section.className =
+    "w-full max-w-7xl flex flex-col items-start gap-6 px-4 sm:px-8 " +
+    "h-full max-h-[100dvh]";
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
@@ -343,13 +349,17 @@ function renderFocusExpandedSection(
 
   // --- Expanded content (entries history + add-entry form + delete) -----
   const expandedWrap = document.createElement("div");
-  expandedWrap.className = "w-full flex flex-col items-start gap-6 pt-8";
+  expandedWrap.className =
+    "w-full flex flex-col items-start gap-4 pt-6 flex-1 min-h-0 w-full";
 
   // Entries history (newest first; the latest is index 0 and is the
   // hero, so we show entries[1..] in the history. The latest is hidden
-  // because it IS the hero.)
+  // because it IS the hero.) The list is a `scroll-region` so it
+  // scrolls on its own without affecting the rest of the page.
   const list = document.createElement("ul");
-  list.className = "w-full max-w-md flex flex-col gap-1";
+  list.className =
+    "w-full max-w-md flex flex-col gap-1 scroll-region " +
+    "max-h-[40vh]";
 
   const history = record.entries.slice(1);
   for (const entry of history) {
@@ -366,7 +376,7 @@ function renderFocusExpandedSection(
   // disappears, the edit expansion stays). This makes the spec's
   // "Tapping the header button again cancels" instruction work.
   const addWrap = document.createElement("div");
-  addWrap.className = "w-full max-w-md flex flex-col items-start gap-4";
+  addWrap.className = "w-full max-w-md flex flex-col items-start gap-4 shrink-0";
 
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -388,7 +398,7 @@ function renderFocusExpandedSection(
   const inConfirm = isDeleteConfirmArmed(record.id);
   deleteBtn.className =
     "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
-    "text-ink-muted/50 hover:text-ink-muted transition-colors";
+    "text-ink-muted/50 hover:text-ink-muted transition-colors shrink-0";
   if (inConfirm) {
     // Subtle visual difference to indicate the "armed" state.
     deleteBtn.classList.remove("text-ink-muted/50");
@@ -526,7 +536,13 @@ const UNIT_PRESETS: ReadonlyArray<string> = [
 
 function renderNewRecord(): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
+  // Constrain the section to the viewport so the form can scroll
+  // independently. The cancel button and title are pinned to the top
+  // (shrink-0) and the form fills the remaining space (flex-1) with
+  // `scroll-region` styling.
+  section.className =
+    "w-full max-w-7xl flex flex-col items-start gap-6 px-4 sm:px-8 " +
+    "h-full max-h-[100dvh]";
   section.dataset.newRecord = "true";
   section.style.viewTransitionName = VT_NEW_RECORD;
 
@@ -537,19 +553,24 @@ function renderNewRecord(): HTMLElement {
   cancelBtn.type = "button";
   cancelBtn.dataset.action = "close-new";
   cancelBtn.className =
-    "self-end font-body text-xs tracking-[0.2em] uppercase text-ink-muted " +
+    "self-end shrink-0 font-body text-xs tracking-[0.2em] uppercase text-ink-muted " +
     "hover:text-ink transition-colors";
   cancelBtn.textContent = "CANCEL";
 
   // Title with top border for visual separation.
   const title = document.createElement("p");
   title.className =
-    "font-body font-semibold text-2xl tracking-[0.2em] uppercase text-ink-muted " +
+    "shrink-0 font-body font-semibold text-2xl tracking-[0.2em] uppercase text-ink-muted " +
     "w-full pb-4 border-b border-line";
   title.textContent = "NEW RECORD";
 
   const form = document.createElement("form");
-  form.className = "w-full max-w-2xl flex flex-col gap-8 text-left";
+  // The form is the scroll region. `flex-1 min-h-0` lets it fill the
+  // remaining vertical space and `scroll-region` enables native touch
+  // scrolling on it.
+  form.className =
+    "w-full max-w-2xl flex flex-col gap-6 text-left " +
+    "flex-1 min-h-0 scroll-region";
   form.dataset.newRecordForm = "true";
 
   // Name — big and prominent

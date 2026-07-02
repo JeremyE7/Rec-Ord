@@ -7,9 +7,9 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
   <BackgroundGlow />
 
   <main
-    class="relative z-10 min-h-screen flex flex-col items-center justify-center px-6 py-10"
+    class="relative z-10 min-h-[100dvh] h-[100dvh] flex flex-col items-stretch justify-start px-0 py-0"
   >
-    <div id="app"></div>
+    <div id="app" class="w-full h-full flex flex-col"></div>
   </main>
 
   {/* Swipe-progress indicator. Fixed to the bottom of the viewport so
@@ -17,6 +17,16 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
    *  handler updates its `--swipe-progress` custom property during a
    *  vertical drag. Pure visual; `aria-hidden` and `pointer-events: none`. */}
   <div id="swipe-progress" class="swipe-progress" aria-hidden="true"></div>
+
+  {/* Swipe-right hint. Fixed to the left edge of the viewport. When the
+   *  user starts swiping right (which opens the new-record form), the
+   *  gesture handler updates its `--swipe-hint-x` and `--swipe-hint-opacity`
+   *  custom properties to slide the label in from the left, giving
+   *  immediate visual feedback that the gesture is being recognized. */}
+  <div id="swipe-hint-right" class="swipe-hint swipe-hint--right" aria-hidden="true">
+    <span class="swipe-hint__arrow">→</span>
+    <span class="swipe-hint__label">NEW RECORD</span>
+  </div>
 </BaseLayout>
 
 <script>

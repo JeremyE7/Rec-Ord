@@ -457,9 +457,10 @@ function goToPreviousRecord(): boolean {
 
 function openNewRecord(): boolean {
   const state = getState();
-  // Works from ANY focus-view state (including the empty state), so the
-  // user can always open the "add new record" form.
-  if (state.view !== "focus") return false;
+  // Only available from the collapsed focus view. In expanded view, the
+  // user is in "edit mode" — horizontal swipes are intentionally blocked
+  // by the gesture handler so the only way out is swipe-down.
+  if (state.view !== "focus" || state.expanded) return false;
   commit(() => {
     setState({ view: "new" });
   }, "push-horizontal-in");

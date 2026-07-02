@@ -189,6 +189,55 @@
 }
 
 /* -----------------------------------------------------------------------------
+ * Swipe-hint indicators
+ *
+ * Edge labels that fade in and slide from outside the viewport when
+ * the user starts a horizontal swipe. The gesture handler drives two
+ * custom properties:
+ *   --swipe-hint-x        translate3d offset in px (negative = off-screen left)
+ *   --swipe-hint-opacity  0..1 visibility
+ * The element is fully off-screen at rest (x = -100%) and only becomes
+ * visible while the user is actively dragging horizontally. Lives in
+ * index.astro (outside #app) so it survives every re-render.
+ * --------------------------------------------------------------------------- */
+.swipe-hint {
+  position: fixed;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border: 1px solid var(--color-accent);
+  background: rgba(250, 204, 21, 0.08);
+  color: var(--color-accent);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  pointer-events: none;
+  transform: translate3d(var(--swipe-hint-x, -200px), -50%, 0);
+  opacity: var(--swipe-hint-opacity, 0);
+  will-change: transform, opacity;
+  z-index: 40;
+  border-radius: 0;
+  white-space: nowrap;
+}
+.swipe-hint--right {
+  left: 1.5rem;
+  flex-direction: row;
+}
+.swipe-hint__arrow {
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+.swipe-hint__label {
+  font-weight: 600;
+}
+
+/* -----------------------------------------------------------------------------
  * Reduced motion: collapse to near-instant, no overshoot, no movement.
  * --------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
@@ -210,6 +259,9 @@
     display: none;
   }
   .swipe-progress {
+    display: none;
+  }
+  .swipe-hint {
     display: none;
   }
 }
