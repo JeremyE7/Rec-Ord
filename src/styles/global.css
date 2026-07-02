@@ -55,6 +55,16 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
+    /* Lock native touch gestures (scroll, pull-to-refresh, double-tap
+     * zoom) so the JS pointer-event handler in `gestures.ts` is the sole
+     * interpreter of touch input. Without this, mobile browsers fire
+     * `pointercancel` on the first sign of a swipe and the JS handler
+     * never sees the move events. The app is full-screen by design
+     * (`overflow: hidden` below) so no native scroll is needed. */
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   h1,

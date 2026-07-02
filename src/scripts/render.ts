@@ -308,7 +308,7 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   const value = document.createElement("h1");
   value.className =
     "font-display font-extrabold leading-[0.9] tracking-[-0.04em] text-accent " +
-    "text-[clamp(7rem,24vw,18rem)] " +
+    "text-[clamp(8.5rem,38vw,18rem)] " +
     "text-shadow-[0_0_40px_rgba(250,204,21,0.25),0_0_80px_rgba(250,204,21,0.12)]";
   value.textContent = formatValue(latest.value);
 
