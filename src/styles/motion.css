@@ -264,6 +264,49 @@
   .swipe-hint {
     display: none;
   }
+  /* PR pulse is a brief glow on the hero; under reduced motion it
+   * collapses to a no-op so the hero stays at its default state. */
+  .pr-pulse {
+    animation: none !important;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * "Nuevo récord" glow pulse
+ *
+ * Added to the hero <h1> for ~0.7s when a new entry (or an edit to the
+ * latest entry) strictly beats the record's previous best in the
+ * record's "good" direction. The pulse starts at the same subtle glow
+ * the hero carries at rest, peaks at 35% of the timeline, and settles
+ * back — a brief, satisfying flash that says "you just broke it" without
+ * being loud. The hero's text-shadow at rest is provided by the 0% and
+ * 100% keyframes (via `fill: both`), so the steady state is consistent
+ * with the animation.
+ *
+ * Driven from app.ts: when a new best is detected, it dispatches
+ * `rec-ord:pr-pulse`; the listener adds `.pr-pulse` to the hero (with a
+ * forced reflow so the animation can replay if it fires twice in a row)
+ * and removes the class 750ms later.
+ * --------------------------------------------------------------------------- */
+@keyframes pr-glow-pulse {
+  0% {
+    text-shadow:
+      0 0 40px rgba(250, 204, 21, 0.25),
+      0 0 80px rgba(250, 204, 21, 0.12);
+  }
+  35% {
+    text-shadow:
+      0 0 80px rgba(250, 204, 21, 0.7),
+      0 0 160px rgba(250, 204, 21, 0.4);
+  }
+  100% {
+    text-shadow:
+      0 0 40px rgba(250, 204, 21, 0.25),
+      0 0 80px rgba(250, 204, 21, 0.12);
+  }
+}
+.pr-pulse {
+  animation: pr-glow-pulse 0.7s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 /* -----------------------------------------------------------------------------

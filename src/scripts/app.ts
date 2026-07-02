@@ -34,8 +34,15 @@
 import { flushSave, getSeedData, loadState, normalize, saveState } from "./persistence";
 import { animateHero } from "./countup";
 import { attachGestures, attachRowSwipe, type GestureHandlers } from "./gestures";
-import { commit, makeEntry, makeRecord, sortEntries } from "./motion";
-import { armDeleteConfirm, consumeDeleteConfirm, onRerender, renderApp, VIEW_ATTRS } from "./render";
+import { commit, isNewBest, latestEntry, makeEntry, makeRecord, sortEntries } from "./motion";
+import {
+  armDeleteConfirm,
+  consumeDeleteConfirm,
+  onRerender,
+  renderApp,
+  setEditingEntryId,
+  VIEW_ATTRS,
+} from "./render";
 import { getState, initState, setState, subscribe } from "./store";
 import type { AppState, Entry, Record } from "./types";
 
@@ -170,7 +177,7 @@ function wire(root: HTMLElement): void {
     cell.addEventListener("click", onGridCellClick);
   });
 
-  // Entry rows: swipe-to-delete
+  // Entry rows: swipe-to-delete + tap-to-edit
   const rows = root.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`);
   rows.forEach((row) => {
     const entryId = row.getAttribute(VIEW_ATTRS.entryId);
@@ -178,6 +185,34 @@ function wire(root: HTMLElement): void {
     attachRowSwipe(row, {
       onDelete: () => deleteEntry(entryId),
     });
+    // Tap → edit (but only when the row is in read-only mode — if the
+    // user is already editing this row, the form's SAVE/CANCEL inputs
+    // own the clicks). Dispatch the custom event; the listener in
+    // init() updates `editingEntryId` and re-renders.
+    row.addEventListener("click", () => {
+      if (row.querySelector(`[${VIEW_ATTRS.entryEditForm}]`) !== null) return;
+      document.dispatchEvent(
+        new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
+      );
+    });
+  });
+
+  // Edit entry form: submit → onEditEntrySubmit, cancel → clear + rerender
+  const editEntryForms = root.querySelectorAll<HTMLFormElement>(
+    `[${VIEW_ATTRS.entryEditForm}]`,
+  );
+  editEntryForms.forEach((form) => {
+    form.addEventListener("submit", onEditEntrySubmit);
+    // Escape inside the form cancels (the global keydown handler is a
+    // no-op while focused in a form input, so the form needs its own).
+    form.addEventListener("keydown", onEditFormKeyDown as EventListener);
+  });
+
+  const cancelEditButtons = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.cancelEdit}]`,
+  );
+  cancelEditButtons.forEach((btn) => {
+    btn.addEventListener("click", onCancelEditClick);
   });
 
   // "LOAD EXAMPLES" button (empty state → populate with seed data)
@@ -290,11 +325,14 @@ function onAddEntrySubmit(e: SubmitEvent): void {
   const value = Number(valueRaw);
   if (!Number.isFinite(value)) return;
 
+  // Build the entry up front so we can reference its id after the
+  // state update (for the PR-pulse check below).
+  const newEntry: Entry = makeEntry(value, date);
+
   commit(() => {
     setState((prev) => {
       const record = currentRecord(prev);
       if (record === null) return prev;
-      const newEntry: Entry = makeEntry(value, date);
       const newEntries = sortEntries([newEntry, ...record.entries]);
       const updated: Record = { ...record, entries: newEntries };
       return {
@@ -303,6 +341,98 @@ function onAddEntrySubmit(e: SubmitEvent): void {
       };
     });
   }, "fade");
+
+  // PR pulse: if the new entry (now the latest, because it has today's
+  // date in 99% of cases, and sortEntries puts it there regardless)
+  // strictly beats every other entry in the record's direction, flash
+  // the hero. No pulse when the record has no direction, when this was
+  // the first entry, or when the value merely ties the previous best.
+  const updatedRecord = currentRecord(getState());
+  if (updatedRecord !== null) {
+    const newLatest = latestEntry(updatedRecord);
+    if (newLatest !== null && newLatest.id === newEntry.id) {
+      if (isNewBest(updatedRecord, newEntry.id, value)) {
+        document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+      }
+    }
+  }
+}
+
+function onEditEntrySubmit(e: SubmitEvent): void {
+  e.preventDefault();
+  const form = e.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const valueRaw = data.get("value");
+  const date = String(data.get("date") ?? "");
+  if (date === "" || valueRaw === null) return;
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value)) return;
+
+  const entryId = form.dataset.entryId;
+  if (entryId === undefined) return;
+
+  const before = currentRecord(getState());
+  if (before === null) return;
+  const oldEntry = before.entries.find((entry) => entry.id === entryId);
+  if (oldEntry === undefined) return;
+
+  // Capture whether the edit changes the latest AND the value (the
+  // hero). If the hero doesn't change, the glow pulse would land on a
+  // number the user didn't just set, which is visually confusing.
+  const wasLatest = latestEntry(before)?.id === entryId;
+  const valueChanged = oldEntry.value !== value;
+
+  // Clear the editing state BEFORE the state update so the render that
+  // fires from the subscriber sees `editingEntryId === null` and shows
+  // the read-only row (not the form).
+  setEditingEntryId(null);
+
+  commit(() => {
+    setState((prev) => {
+      const r = currentRecord(prev);
+      if (r === null) return prev;
+      const updatedEntries = r.entries.map((entry) =>
+        entry.id === entryId ? { ...entry, value, date } : entry,
+      );
+      const updated: Record = { ...r, entries: sortEntries(updatedEntries) };
+      return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
+    });
+  }, "fade");
+
+  // PR pulse on edit: only when the edited entry IS the latest after
+  // the state update (which can change if the user re-dated an older
+  // entry into the future) and the value actually changed, AND the new
+  // value strictly beats every other entry.
+  if (wasLatest && valueChanged) {
+    const updated = currentRecord(getState());
+    if (updated !== null) {
+      const newLatest = latestEntry(updated);
+      if (newLatest !== null && newLatest.id === entryId) {
+        if (isNewBest(updated, entryId, value)) {
+          document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+        }
+      }
+    }
+  }
+}
+
+function onCancelEditClick(_e: MouseEvent): void {
+  // Clear the local edit state and trigger a re-render so the row
+  // flips back to read-only. Uses `rec-ord:rerender` (not `commit`
+  // directly) for consistency with the delete-confirm timeout — no
+  // underlying store change, just ephemeral UI state reverting.
+  setEditingEntryId(null);
+  document.dispatchEvent(new CustomEvent("rec-ord:rerender"));
+}
+
+function onEditFormKeyDown(e: KeyboardEvent): void {
+  // Escape inside the edit form → cancel. Enter is handled by the
+  // form's default submit; this only adds the cancel path.
+  if (e.key === "Escape") {
+    e.preventDefault();
+    setEditingEntryId(null);
+    document.dispatchEvent(new CustomEvent("rec-ord:rerender"));
+  }
 }
 
 function onNewEntryToggleClick(): void {
@@ -741,6 +871,41 @@ function init(): void {
     rerender();
   });
   cleanups.push(unsubRerender);
+
+  // Tap-to-edit: the render module dispatches `rec-ord:edit-entry`
+  // with `detail.entryId` when a row is tapped. We set the local edit
+  // state in the render module and re-render — the next render of
+  // that row will swap its content for the inline edit form.
+  const onEditEntry = (e: Event): void => {
+    const detail = (e as CustomEvent<{ entryId: string }>).detail;
+    if (detail === undefined) return;
+    setEditingEntryId(detail.entryId);
+    rerender();
+  };
+  document.addEventListener("rec-ord:edit-entry", onEditEntry);
+  cleanups.push(() => document.removeEventListener("rec-ord:edit-entry", onEditEntry));
+
+  // "Nuevo récord" glow pulse: when an entry is added or edited such
+  // that it strictly beats the record's previous best, the handler
+  // (onAddEntrySubmit / onEditEntrySubmit) dispatches this event. The
+  // listener flashes the hero with the `.pr-pulse` class for ~0.7s.
+  // The forced reflow + class re-add pattern lets the animation replay
+  // even if two pulses fire back-to-back. No-op when the user is not
+  // on the focus view (no `[data-focus-card]` in the DOM).
+  const onPrPulse = (): void => {
+    const hero = document.querySelector<HTMLElement>("[data-focus-card] h1");
+    if (hero === null) return;
+    hero.classList.remove("pr-pulse");
+    // Force a reflow so the animation can replay if it fires twice in a row.
+    void hero.offsetWidth;
+    hero.classList.add("pr-pulse");
+    // 750ms gives the 0.7s animation a 50ms grace window before
+    // the class is removed (so the `100%` keyframe state is held
+    // briefly before the class is gone).
+    window.setTimeout(() => hero.classList.remove("pr-pulse"), 750);
+  };
+  document.addEventListener("rec-ord:pr-pulse", onPrPulse);
+  cleanups.push(() => document.removeEventListener("rec-ord:pr-pulse", onPrPulse));
 
   // Save any pending writes before the page unloads.
   const onPageHide = (): void => {

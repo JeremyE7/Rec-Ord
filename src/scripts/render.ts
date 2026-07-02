@@ -17,7 +17,14 @@
  */
 
 import type { AppState, Entry, Record, View } from "./types";
-import { formatDelta, formatRelativeDate, formatValue, latestEntry, previousEntry, todayISO } from "./motion";
+import {
+  formatDelta,
+  formatRelativeDate,
+  formatValue,
+  latestEntry,
+  previousEntry,
+  todayISO,
+} from "./motion";
 
 /* ---------------------------------------------------------------------------
  * View-transition name constants
@@ -38,9 +45,9 @@ const VT_NEW_RECORD = "new-record";
  *
  * Some interactions need ephemeral state that should NOT be persisted and
  * should NOT live in the global store (because it's not part of the data
- * model — it's UI state for the two-tap delete confirmation). We keep it
- * here in module scope; it survives re-renders within the session and
- * resets on reload.
+ * model — it's UI state for the two-tap delete confirmation, the inline
+ * entry-edit form, etc.). We keep it here in module scope; it survives
+ * re-renders within the session and resets on reload.
  * ------------------------------------------------------------------------- */
 
 interface DeleteConfirmLocal {
@@ -49,6 +56,11 @@ interface DeleteConfirmLocal {
 }
 
 const deleteConfirm: DeleteConfirmLocal = { recordId: null, timer: null };
+
+/** ID of the entry currently being inline-edited in the expanded focus
+ *  view. `null` means no entry is being edited. Like `deleteConfirm`,
+ *  this is ephemeral UI state — not persisted, not in the global store. */
+let editingEntryId: string | null = null;
 
 /**
  * Public API for the delete-confirm two-tap pattern. The app module
@@ -95,6 +107,17 @@ export function cancelDeleteConfirm(): void {
   deleteConfirm.timer = null;
 }
 
+/** Returns the id of the entry currently being inline-edited, or null. */
+export function getEditingEntryId(): string | null {
+  return editingEntryId;
+}
+
+/** Sets the id of the entry currently being inline-edited. Pass `null`
+ *  to clear. The caller is responsible for triggering a re-render. */
+export function setEditingEntryId(id: string | null): void {
+  editingEntryId = id;
+}
+
 /** Subscribes to local re-render triggers (the delete-confirm timeout). */
 export function onRerender(handler: () => void): () => void {
   const listener = (): void => handler();
@@ -115,6 +138,20 @@ export function renderApp(state: AppState): HTMLElement {
     cancelDeleteConfirm();
   }
 
+  // If an entry is being inline-edited but the user navigated to a
+  // different record (or the entry no longer exists — e.g. it was the
+  // only entry and the record was deleted), clear the edit state so
+  // the next render shows the read-only row.
+  if (editingEntryId !== null) {
+    const currentRecord = state.records.find((r) => r.id === state.currentRecordId);
+    const stillExists =
+      currentRecord !== undefined &&
+      currentRecord.entries.some((e) => e.id === editingEntryId);
+    if (!stillExists) {
+      editingEntryId = null;
+    }
+  }
+
   if (state.records.length === 0) {
     return renderEmpty();
   }
@@ -124,6 +161,119 @@ export function renderApp(state: AppState): HTMLElement {
   if (view === "grid") return renderGrid(state);
   // view === "focus"
   return state.expanded ? renderFocusExpanded(state) : renderFocus(state);
+}
+
+/* ---------------------------------------------------------------------------
+ * Sparkline
+ *
+ * A small SVG `<polyline>` that visualizes a record's value trend. Used
+ * in two places:
+ *   - the focus view (large, above the hero) — a quick visual scan of
+ *     where the number is headed before the user reads it
+ *   - the grid (small, below the delta) — a subtle trend hint per cell
+ *
+ * Implementation: entries are reversed to draw oldest→newest left→right.
+ * Min/max are computed across the values; range is `max - min || 1` so
+ * a flat series (all values equal) doesn't divide by zero. Each point
+ * is mapped into the viewBox, inset 1px top/bottom so the stroke doesn't
+ * touch the edges. The polyline uses the accent color at 0.7 opacity;
+ * an optional circle marks the latest point at 0.95 opacity.
+ *
+ * With fewer than 2 entries, there is no meaningful trend — return a
+ * short horizontal placeholder line so the layout doesn't jump and the
+ * spot still reads as "a sparkline lives here".
+ * ------------------------------------------------------------------------- */
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+export interface SparklineOptions {
+  width: number;
+  height: number;
+  showLatestDot?: boolean;
+  className?: string;
+}
+
+export function renderSparkline(
+  entries: ReadonlyArray<Entry>,
+  options: SparklineOptions,
+): SVGSVGElement {
+  const width = options.width;
+  const height = options.height;
+  const showLatestDot = options.showLatestDot === true;
+  const className = options.className ?? "";
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  // `block` so `mx-auto` (focus view) actually centers the SVG; SVG
+  // is `display: inline` by default which makes `margin: auto` a no-op.
+  // `overflow-visible` so strokes at the right/bottom edge aren't clipped
+  // by the viewBox.
+  const classes: string[] = ["block", "overflow-visible"];
+  if (className !== "") classes.push(className);
+  svg.setAttribute("class", classes.join(" "));
+
+  if (entries.length < 2) {
+    // Placeholder: a short horizontal line at the vertical center, at
+    // very low opacity. Reads as "there's a sparkline here, just not
+    // enough data to draw one".
+    const line = document.createElementNS(SVG_NS, "line");
+    const yMid = String(height / 2);
+    line.setAttribute("x1", "0");
+    line.setAttribute("y1", yMid);
+    line.setAttribute("x2", String(width * 0.5));
+    line.setAttribute("y2", yMid);
+    line.setAttribute("stroke", "var(--color-accent)");
+    line.setAttribute("stroke-width", "1.5");
+    line.setAttribute("stroke-linecap", "round");
+    line.setAttribute("opacity", "0.2");
+    svg.append(line);
+    return svg;
+  }
+
+  // Draw oldest → newest (left → right). The store keeps entries
+  // newest-first, so reverse once.
+  const ordered: Entry[] = [...entries].reverse();
+  const n = ordered.length;
+  let min = ordered[0]!.value;
+  let max = ordered[0]!.value;
+  for (const e of ordered) {
+    if (e.value < min) min = e.value;
+    if (e.value > max) max = e.value;
+  }
+  const range = max - min !== 0 ? max - min : 1;
+
+  const points: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * width;
+    const y = 1 + (1 - (ordered[i]!.value - min) / range) * (height - 2);
+    points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+
+  const polyline = document.createElementNS(SVG_NS, "polyline");
+  polyline.setAttribute("points", points.join(" "));
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", "var(--color-accent)");
+  polyline.setAttribute("stroke-width", "1.5");
+  polyline.setAttribute("stroke-linecap", "round");
+  polyline.setAttribute("stroke-linejoin", "round");
+  polyline.setAttribute("opacity", "0.7");
+  svg.append(polyline);
+
+  if (showLatestDot) {
+    const lastX = width;
+    const lastY = 1 + (1 - (ordered[n - 1]!.value - min) / range) * (height - 2);
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", String(lastX));
+    circle.setAttribute("cy", lastY.toFixed(2));
+    circle.setAttribute("r", "2");
+    circle.setAttribute("fill", "var(--color-accent)");
+    circle.setAttribute("opacity", "0.95");
+    svg.append(circle);
+  }
+
+  return svg;
 }
 
 /* ---------------------------------------------------------------------------
@@ -203,15 +353,27 @@ function renderFocus(state: AppState): HTMLElement {
 }
 
 function renderFocusInner(record: Record, latest: Entry): HTMLElement {
-  // Full card content: context + hero + stats. The wrapper section
-  // (collapsed focus and expanded focus) adds `data-focus-card` and the
-  // shared `view-transition-name: record-card`, so the browser pairs the
-  // two on long-press / collapse and morphs the height/content.
+  // Full card content: context + sparkline + hero + stats. The wrapper
+  // section (collapsed focus and expanded focus) adds `data-focus-card`
+  // and the shared `view-transition-name: record-card`, so the browser
+  // pairs the two on long-press / collapse and morphs the height/content.
   const inner = document.createElement("div");
   inner.className = "flex flex-col items-start text-left gap-10 w-full";
 
   // Context label
   inner.append(renderContextLabel(record));
+
+  // Trend sparkline — a quick visual scan of the series before the user
+  // reads the big number. Sits between the context label and the hero
+  // (the same spot in collapsed and expanded focus, since both go
+  // through `renderFocusInner`).
+  const sparkline = renderSparkline(record.entries, {
+    width: 160,
+    height: 32,
+    showLatestDot: true,
+    className: "text-accent mx-auto",
+  });
+  inner.append(sparkline);
 
   // Hero (value + unit + optional direction indicator)
   inner.append(renderHero(record, latest));
@@ -263,10 +425,13 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   }
 
   // Value: the big number. font-black (900) for maximum punch, tight
-  // leading and tracking. No text-shadow — the big yellow number is
-  // striking enough on its own against the dark background.
+  // leading and tracking. The `data-hero` attribute is the hook for the
+  // "nuevo récord" glow pulse — when an entry breaks the record's best,
+  // app.ts adds a temporary `pr-pulse` class to this element to flash
+  // a text-shadow. Without a breaking entry the element renders plain.
   const value = document.createElement("h1");
   value.id = "hero-value";
+  value.dataset.hero = "true";
   value.className =
     "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
     "text-[clamp(12rem,52vw,28rem)] tabular-nums";
@@ -426,6 +591,17 @@ function renderFocusExpanded(state: AppState): HTMLElement {
 
 /* ---------------------------------------------------------------------------
  * Entry row (used inside the history list)
+ *
+ * Two visual states for the row, switched by the local `editingEntryId`
+ * in render.ts:
+ *   - read-only (default): value on the left, relative date + a
+ *     "<" swipe hint on the right
+ *   - editing: the content is REPLACED by the inline edit form
+ *     (renderEntryEditForm below). Tapping the row dispatches
+ *     `rec-ord:edit-entry`, app.ts sets `editingEntryId`, and the next
+ *     render swaps the content. Swipe-to-delete is still wired on the
+ *     same <li> so the two gestures stay distinct: tap → edit, swipe
+ *     left → delete.
  * ------------------------------------------------------------------------- */
 
 function renderEntryRow(entry: Entry, record: Record): HTMLElement {
@@ -435,6 +611,11 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
   li.dataset.entryId = entry.id;
   li.dataset.entryRow = "true";
   li.setAttribute("aria-label", `Entry: ${formatValue(entry.value)} ${record.unit}, ${formatRelativeDate(entry.date).toLowerCase()}`);
+
+  if (editingEntryId === entry.id) {
+    li.append(renderEntryEditForm(entry, record));
+    return li;
+  }
 
   const left = document.createElement("span");
   left.className = "font-body font-medium tabular-nums";
@@ -457,6 +638,93 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
   rightWrap.append(right, hint);
   li.append(left, rightWrap);
   return li;
+}
+
+/* ---------------------------------------------------------------------------
+ * Inline entry-edit form (replaces the row's read-only content while
+ * the user is correcting a value/date).
+ *
+ * The form keeps the row's `flex items-center justify-between` layout:
+ *   - top row: value input + unit hint + date input (one line)
+ *   - bottom row: SAVE + CANCEL text buttons (right-aligned)
+ *
+ * Inputs are borderless, transparent, with a thin accent border on
+ * focus — matches the rest of the design's "bare" input feel.
+ *
+ * Markers:
+ *   - data-entry-edit-form="true"   — wire() finds it and binds submit
+ *   - data-entry-id="<id>"          — wire() / onEditEntrySubmit read
+ *                                     it to know which entry to update
+ *   - data-cancel-edit (on CANCEL)  — wire() binds click → cancel
+ *
+ * Pressing Escape inside the form also cancels (the app's keydown
+ * handler is no-op while focused in a form input, so the form gets
+ * its own keydown listener).
+ * ------------------------------------------------------------------------- */
+
+function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
+  const form = document.createElement("form");
+  form.className = "w-full flex flex-col gap-2";
+  form.dataset.entryEditForm = "true";
+  form.dataset.entryId = entry.id;
+
+  // --- Top row: value + unit + date ---------------------------------------
+  const topRow = document.createElement("div");
+  topRow.className = "flex items-center justify-between gap-3";
+
+  const valueInput = document.createElement("input");
+  valueInput.type = "number";
+  valueInput.name = "value";
+  valueInput.required = true;
+  valueInput.step = "any";
+  valueInput.value = String(entry.value);
+  valueInput.setAttribute("aria-label", "Value");
+  valueInput.className =
+    "bg-transparent border-b border-line/40 focus:border-accent outline-none " +
+    "font-body font-medium tabular-nums text-ink text-base w-20 text-left " +
+    "transition-colors";
+
+  const unitHint = document.createElement("span");
+  unitHint.className =
+    "font-body text-xs uppercase tracking-[0.1em] text-ink-muted opacity-50 shrink-0";
+  unitHint.textContent = record.unit;
+
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.name = "date";
+  dateInput.required = true;
+  dateInput.value = entry.date;
+  dateInput.setAttribute("aria-label", "Date");
+  dateInput.className =
+    "bg-transparent border-b border-line/40 focus:border-accent outline-none " +
+    "font-body font-medium tabular-nums text-ink text-sm w-36 text-left " +
+    "scheme-dark transition-colors";
+
+  topRow.append(valueInput, unitHint, dateInput);
+
+  // --- Bottom row: SAVE + CANCEL ------------------------------------------
+  const bottomRow = document.createElement("div");
+  bottomRow.className = "flex items-center justify-end gap-4";
+
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className =
+    "font-body text-[0.625rem] tracking-[0.2em] uppercase text-accent " +
+    "hover:text-ink transition-colors cursor-pointer";
+  save.textContent = "SAVE";
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.dataset.cancelEdit = "true";
+  cancel.className =
+    "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
+    "text-ink-muted/60 hover:text-ink-muted transition-colors cursor-pointer";
+  cancel.textContent = "CANCEL";
+
+  bottomRow.append(save, cancel);
+
+  form.append(topRow, bottomRow);
+  return form;
 }
 
 /* ---------------------------------------------------------------------------
@@ -790,7 +1058,9 @@ function renderGridCell(
   left.append(dateLine);
 
   // Right side: value + unit (big, yellow, display font — the hero)
-  // + delta (small, accent, tabular nums) below
+  // + delta (small, accent, tabular nums) + a thin trend sparkline
+  // below. The sparkline is intentionally subtle (opacity-60, 48×14)
+  // so it adds visual interest without competing with the value.
   const right = document.createElement("div");
   right.className = "flex flex-col items-end gap-1 shrink-0";
 
@@ -821,6 +1091,18 @@ function renderGridCell(
   }
   right.append(deltaEl);
 
+  // Trend sparkline — 48×14, no latest dot (too small), opacity-60 so
+  // it sits beneath the value+delta visually. With < 2 entries, the
+  // helper renders a short placeholder line at 0.2 opacity so the
+  // layout stays the same.
+  const sparkline = renderSparkline(record.entries, {
+    width: 48,
+    height: 14,
+    showLatestDot: false,
+    className: "text-accent opacity-60 mt-1",
+  });
+  right.append(sparkline);
+
   cell.append(left, right);
   return cell;
 }
@@ -844,4 +1126,6 @@ export const VIEW_ATTRS = {
   entryId: "data-entry-id",
   unitPreset: "data-unit-preset",
   direction: "data-direction",
+  entryEditForm: "data-entry-edit-form",
+  cancelEdit: "data-cancel-edit",
 } as const;

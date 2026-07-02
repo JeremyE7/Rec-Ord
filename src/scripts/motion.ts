@@ -238,3 +238,47 @@ export function makeRecord(
   }
   return record;
 }
+
+/**
+ * Returns true when `newValue` strictly beats every OTHER entry's value
+ * in the record's "good" direction.
+ *
+ *   - "up"   → newValue > Math.max(...otherValues)
+ *   - "down" → newValue < Math.min(...otherValues)
+ *   - null/undefined → always false (no "best" concept)
+ *   - no other entries → always false (nothing to beat)
+ *
+ * `newEntryId` is the id of the entry being considered; it MUST be
+ * excluded from `otherValues`. For an add, this is the id of the new
+ * entry (which is already in `record.entries` when this is called). For
+ * an edit, this is the id of the entry being edited (its value in
+ * `record.entries` is the NEW value, which is what we want to compare).
+ *
+ * Used by the "nuevo récord" glow pulse on the hero.
+ */
+export function isNewBest(
+  record: Record,
+  newEntryId: string,
+  newValue: number,
+): boolean {
+  if (record.direction !== "up" && record.direction !== "down") return false;
+  const otherValues: number[] = [];
+  for (const e of record.entries) {
+    if (e.id === newEntryId) continue;
+    otherValues.push(e.value);
+  }
+  if (otherValues.length === 0) return false;
+  if (record.direction === "up") {
+    let max = otherValues[0]!;
+    for (const v of otherValues) {
+      if (v > max) max = v;
+    }
+    return newValue > max;
+  }
+  // direction === "down"
+  let min = otherValues[0]!;
+  for (const v of otherValues) {
+    if (v < min) min = v;
+  }
+  return newValue < min;
+}
