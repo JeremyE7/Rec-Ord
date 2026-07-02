@@ -175,25 +175,6 @@ function findCurrentRecord(state: AppState): Record | null {
   return state.records.find((r) => r.id === state.currentRecordId) ?? null;
 }
 
-/**
- * Returns the records immediately before (newer) and after (older) the
- * current one in `state.records`. Records are ordered newest-first, so:
- *   - prev = state.records[idx - 1]  (newer, shown when swiping down)
- *   - next = state.records[idx + 1]  (older, shown when swiping up)
- * Returns `{ prev: null, next: null }` if the current id is not found.
- */
-function findAdjacentRecords(
-  state: AppState,
-  currentId: string,
-): { prev: Record | null; next: Record | null } {
-  const idx = state.records.findIndex((r) => r.id === currentId);
-  if (idx === -1) return { prev: null, next: null };
-  return {
-    prev: idx > 0 ? state.records[idx - 1] ?? null : null,
-    next: idx < state.records.length - 1 ? state.records[idx + 1] ?? null : null,
-  };
-}
-
 function renderFocus(state: AppState): HTMLElement {
   const record = findCurrentRecord(state);
   if (record === null) {
@@ -203,72 +184,22 @@ function renderFocus(state: AppState): HTMLElement {
   const latest = latestEntry(record);
   if (latest === null) return renderEmpty();
 
-  const { prev, next } = findAdjacentRecords(state, record.id);
-
   // The section is THE focus card for view-transition purposes. The
   // expanded view's section is a different element with the same
   // `view-transition-name: record-card`, so the browser pairs them on
-  // long-press / collapse and morphs the height/content with the
-  // spring easing. The section is `position: relative` so the absolutely-
-  // positioned hint elements anchor to it (they live outside the
-  // section's content flow).
+  // long-press / collapse and morphs the height/content. The section is
+  // `position: relative` so the ::after pseudo-element (swipe progress
+  // bar, styled in motion.css) can anchor to its bottom edge.
   const section = document.createElement("section");
   section.className =
-    "relative w-full max-w-7xl flex flex-col items-center gap-10";
+    "relative w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
   // Current card content (context label + hero + stats, when applicable).
   section.append(renderFocusInner(record, latest));
 
-  // Swipe-progress indicator: a thin 2px bar at the bottom edge of the
-  // focus card that fills from 0→1 as the user drags vertically. The
-  // gesture handler updates its `transform: scaleX(progress)` during
-  // drag. Styled in motion.css. Only present on the collapsed focus
-  // card (not expanded, not grid).
-  const swipeProgress = document.createElement("div");
-  swipeProgress.className = "swipe-progress";
-  swipeProgress.dataset.swipeProgress = "true";
-  swipeProgress.setAttribute("aria-hidden", "true");
-  section.append(swipeProgress);
-
-  // Edge hint: a small text whisper of the adjacent record's hero, just
-  // below the current card (for swipe-up → next) or just above (for
-  // swipe-down → prev). The hint is invisible by default — the gesture
-  // handler fades it in past 50% of the swipe commit distance. Render
-  // only if the adjacent record actually exists (skipped at the edges
-  // of the list). The hint is `aria-hidden` and `pointer-events: none`
-  // (via CSS) so it never interferes with screen readers or gestures.
-  if (next !== null) {
-    const nextLatest = latestEntry(next);
-    if (nextLatest !== null) {
-      section.append(renderFocusHint(next, nextLatest, "next"));
-    }
-  }
-  if (prev !== null) {
-    const prevLatest = latestEntry(prev);
-    if (prevLatest !== null) {
-      section.append(renderFocusHint(prev, prevLatest, "prev"));
-    }
-  }
-
   return section;
-}
-
-function renderFocusHint(
-  record: Record,
-  latest: Entry,
-  position: "prev" | "next",
-): HTMLElement {
-  const hint = document.createElement("div");
-  hint.className = `focus-hint focus-hint--${position}`;
-  hint.dataset.focusHint = position;
-  hint.setAttribute("aria-hidden", "true");
-  // Just the value + unit — a tiny whisper of what's next, not a full
-  // preview card. `aria-hidden` is set above and `pointer-events: none`
-  // is set in CSS.
-  hint.textContent = `${formatValue(latest.value)} ${record.unit}`;
-  return hint;
 }
 
 function renderFocusInner(record: Record, latest: Entry): HTMLElement {
@@ -277,7 +208,7 @@ function renderFocusInner(record: Record, latest: Entry): HTMLElement {
   // shared `view-transition-name: record-card`, so the browser pairs the
   // two on long-press / collapse and morphs the height/content.
   const inner = document.createElement("div");
-  inner.className = "flex flex-col items-center gap-10";
+  inner.className = "flex flex-col items-start text-left gap-10 w-full";
 
   // Context label
   inner.append(renderContextLabel(record));
@@ -312,34 +243,40 @@ function renderContextLabel(record: Record): HTMLElement {
 }
 
 function renderHero(record: Record, latest: Entry): HTMLElement {
+  // Hero: the DOMINANT visual element. The value is huge, left-aligned,
+  // and the first thing the eye sees. The unit sits below as a secondary
+  // label. The direction indicator (if any) is a small badge.
   const heroWrap = document.createElement("div");
-  heroWrap.className = "flex items-baseline gap-2 w-full justify-center";
+  heroWrap.className = "relative flex flex-col items-start text-left w-full";
   heroWrap.style.viewTransitionName = VT_HERO;
 
+  // Direction indicator: small ↑ or ↓ badge in the top-right corner.
+  // Rendered first in DOM so it's positioned absolutely before the value.
+  if (record.direction === "up" || record.direction === "down") {
+    const dir = document.createElement("span");
+    dir.className =
+      "absolute top-0 right-0 font-body text-sm tracking-[0.15em] uppercase " +
+      "text-ink-muted opacity-50";
+    dir.textContent = record.direction === "up" ? "↑" : "↓";
+    dir.setAttribute("aria-hidden", "true");
+    heroWrap.append(dir);
+  }
+
+  // Value: the big number. font-black (900) for maximum punch, tight
+  // leading and tracking. No text-shadow — the big yellow number is
+  // striking enough on its own against the dark background.
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.className =
-    "font-display font-extrabold leading-[0.9] tracking-[-0.04em] text-accent " +
-    "text-[clamp(10rem,42vw,22rem)] " +
-    "text-shadow-[0_0_40px_rgba(250,204,21,0.25),0_0_80px_rgba(250,204,21,0.12)]";
+    "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
+    "text-[clamp(12rem,52vw,28rem)] tabular-nums";
   value.textContent = formatValue(latest.value);
 
-  const unit = document.createElement("span");
+  // Unit: displayed BELOW the value as a secondary label.
+  const unit = document.createElement("div");
   unit.className =
-    "font-display font-bold text-accent leading-none " +
-    "text-[clamp(1.75rem,4vw,3.5rem)] pb-2 md:pb-12";
+    "font-body text-2xl tracking-[0.2em] uppercase text-ink-muted mt-2";
   unit.textContent = record.unit;
-
-  // Direction indicator: small ↑ or ↓ next to the unit, only when the
-  // record has a goal direction. Styled muted so it doesn't compete with
-  // the main number.
-  if (record.direction === "up" || record.direction === "down") {
-    const dir = document.createElement("span");
-    dir.className = "text-ink-muted opacity-50 text-[0.5em] ml-1";
-    dir.textContent = record.direction === "up" ? "↑" : "↓";
-    dir.setAttribute("aria-hidden", "true");
-    unit.append(dir);
-  }
 
   heroWrap.append(value, unit);
   return heroWrap;
@@ -348,8 +285,8 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
 function renderStats(record: Record, latest: Entry, prev: Entry): HTMLElement {
   const stats = document.createElement("div");
   stats.className =
-    "flex flex-col items-center gap-8 w-full pt-8 border-t border-line " +
-    "md:flex-row md:justify-center";
+    "flex flex-col items-start gap-8 w-full pt-8 border-t border-line " +
+    "md:flex-row md:justify-start";
 
   const previousCol = document.createElement("div");
   previousCol.className = "flex flex-col gap-1";
@@ -398,7 +335,7 @@ function renderFocusExpandedSection(
   state: AppState,
 ): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-center gap-10";
+  section.className = "w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
@@ -406,7 +343,7 @@ function renderFocusExpandedSection(
 
   // --- Expanded content (entries history + add-entry form + delete) -----
   const expandedWrap = document.createElement("div");
-  expandedWrap.className = "w-full flex flex-col items-center gap-6 pt-8";
+  expandedWrap.className = "w-full flex flex-col items-start gap-6 pt-8";
 
   // Entries history (newest first; the latest is index 0 and is the
   // hero, so we show entries[1..] in the history. The latest is hidden
@@ -429,7 +366,7 @@ function renderFocusExpandedSection(
   // disappears, the edit expansion stays). This makes the spec's
   // "Tapping the header button again cancels" instruction work.
   const addWrap = document.createElement("div");
-  addWrap.className = "w-full max-w-md flex flex-col items-center gap-4";
+  addWrap.className = "w-full max-w-md flex flex-col items-start gap-4";
 
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -589,20 +526,33 @@ const UNIT_PRESETS: ReadonlyArray<string> = [
 
 function renderNewRecord(): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-center gap-10";
+  section.className = "w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
   section.dataset.newRecord = "true";
   section.style.viewTransitionName = VT_NEW_RECORD;
 
+  // Cancel button at the top-right. The form is opened by swipe-right,
+  // so there's no other way to close it without swiping left — this
+  // gives a clear tap target.
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.dataset.action = "close-new";
+  cancelBtn.className =
+    "self-end font-body text-xs tracking-[0.2em] uppercase text-ink-muted " +
+    "hover:text-ink transition-colors";
+  cancelBtn.textContent = "CANCEL";
+
+  // Title with top border for visual separation.
   const title = document.createElement("p");
   title.className =
-    "font-body font-semibold text-xs tracking-[0.2em] uppercase text-ink-muted";
+    "font-body font-semibold text-2xl tracking-[0.2em] uppercase text-ink-muted " +
+    "w-full pb-4 border-b border-line";
   title.textContent = "NEW RECORD";
 
   const form = document.createElement("form");
-  form.className = "w-full max-w-md flex flex-col gap-6";
+  form.className = "w-full max-w-2xl flex flex-col gap-8 text-left";
   form.dataset.newRecordForm = "true";
 
-  // Name
+  // Name — big and prominent
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.name = "name";
@@ -612,10 +562,10 @@ function renderNewRecord(): HTMLElement {
   nameInput.autocomplete = "off";
   nameInput.className =
     "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-2xl font-display text-ink w-full " +
+    "text-3xl font-display text-ink w-full " +
     "transition-colors";
 
-  // Value
+  // Value — HUGE, yellow, the centerpiece
   const valueInput = document.createElement("input");
   valueInput.type = "number";
   valueInput.name = "value";
@@ -625,15 +575,12 @@ function renderNewRecord(): HTMLElement {
   valueInput.setAttribute("aria-label", "Value");
   valueInput.className =
     "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-2xl font-display tabular-nums text-ink w-full " +
+    "text-6xl font-display tabular-nums text-accent w-full text-center " +
     "transition-colors";
 
-  // --- Unit preset picker -----------------------------------------------
-  // A row of small pill buttons. Clicking one fills the unit input.
-  // The last button is CUSTOM (empty preset) — it clears the input and
-  // focuses it. The active preset is highlighted.
+  // --- Unit preset picker: 3-column grid of large pill buttons --------
   const presetsRow = document.createElement("div");
-  presetsRow.className = "flex flex-wrap gap-2";
+  presetsRow.className = "grid grid-cols-3 sm:grid-cols-5 gap-3";
   presetsRow.setAttribute("role", "group");
   presetsRow.setAttribute("aria-label", "Unit preset");
 
@@ -642,10 +589,9 @@ function renderNewRecord(): HTMLElement {
     btn.type = "button";
     btn.dataset.unitPreset = preset;
     btn.textContent = preset === "" ? "CUSTOM" : preset;
-    // Base + inactive classes. The active state is toggled on click.
     btn.className =
-      "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
-      "px-3 py-1 border transition-colors cursor-pointer " +
+      "font-body text-sm tracking-[0.15em] uppercase " +
+      "px-4 py-3 border transition-colors cursor-pointer " +
       "border-line text-ink-muted hover:text-ink hover:border-ink-muted";
     presetsRow.append(btn);
   }
@@ -660,15 +606,12 @@ function renderNewRecord(): HTMLElement {
   unitInput.autocomplete = "off";
   unitInput.className =
     "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-xl font-body tracking-[0.1em] uppercase text-ink w-full " +
+    "text-2xl font-body tracking-[0.1em] uppercase text-ink w-full text-left " +
     "transition-colors";
 
-  // --- Direction toggle --------------------------------------------------
-  // Three buttons: ↑ MORE (up = more is better), ↓ LESS (down = less is
-  // better), — ANY (no preference). A hidden input stores the current
-  // value for form submission. Default: — ANY (empty value).
+  // --- Direction toggle: 3 large buttons in a row -----------------------
   const directionRow = document.createElement("div");
-  directionRow.className = "flex gap-2";
+  directionRow.className = "grid grid-cols-3 gap-3";
   directionRow.setAttribute("role", "group");
   directionRow.setAttribute("aria-label", "Direction");
 
@@ -687,14 +630,12 @@ function renderNewRecord(): HTMLElement {
     btn.type = "button";
     btn.dataset.direction = opt.value;
     btn.textContent = opt.label;
-    // Base + (in)active classes. The active class is the default for
-    // "— ANY" on initial render; clicks toggle the active state.
     const stateClasses = opt.defaultActive
       ? "border-accent text-accent"
       : "border-line text-ink-muted hover:text-ink hover:border-ink-muted";
     btn.className =
-      "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
-      "flex-1 px-3 py-2 border transition-colors cursor-pointer " +
+      "font-body text-base tracking-[0.15em] uppercase " +
+      "px-4 py-3 border transition-colors cursor-pointer " +
       stateClasses;
     directionRow.append(btn);
   }
@@ -714,15 +655,16 @@ function renderNewRecord(): HTMLElement {
   dateInput.setAttribute("aria-label", "Date");
   dateInput.className =
     "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-base font-body tabular-nums text-ink w-full " +
+    "text-xl font-body tabular-nums text-ink w-full text-left " +
     "scheme-dark transition-colors";
 
-  // Submit
+  // Submit — full-width primary yellow button
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.className =
-    "font-body text-xs tracking-[0.2em] uppercase text-accent " +
-    "hover:text-ink transition-colors text-center w-full pt-6 border-t border-line";
+    "font-body text-xl tracking-[0.2em] uppercase font-semibold " +
+    "text-bg bg-accent hover:bg-accent-deep " +
+    "py-4 transition-colors w-full border-t border-line mt-2";
   submit.textContent = "SAVE";
 
   form.append(
@@ -736,7 +678,7 @@ function renderNewRecord(): HTMLElement {
     submit,
   );
 
-  section.append(title, form);
+  section.append(cancelBtn, title, form);
   return section;
 }
 

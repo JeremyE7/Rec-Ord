@@ -162,37 +162,31 @@
 }
 
 /* -----------------------------------------------------------------------------
- * Edge hint for the focus view: a small text whisper of the adjacent
- * record's hero (value + unit), positioned just below (next) or just
- * above (prev) the current focus card. The hint is invisible by default
- * (opacity: 0) — the gesture handler fades it in past 50% of the swipe
- * commit distance so the user gets a subtle preview of what's coming,
- * without an always-visible card stack on screen.
+ * Swipe-progress indicator (CSS-only, driven by --swipe-progress custom
+ * property set by gestures.ts during drag).
  *
- * The hint is `aria-hidden="true"` in the DOM and `pointer-events: none`
- * here, so it never affects screen readers or gestures. The section
- * that contains it is `position: relative` (set inline in render.ts),
- * so the hint's `top` / `bottom` values anchor to the section's box.
+ * A thin 2px bar at the bottom edge of the focus card. It fills from
+ * 0→1 (scaleX) as the user drags vertically, providing a clear visual
+ * signal that "you're about to commit". The progress value is set as a
+ * CSS custom property on the [data-focus-card] element by the gesture
+ * handler — no DOM element needed. Hidden entirely under reduced motion.
  * --------------------------------------------------------------------------- */
-.focus-hint {
+[data-focus-card] {
+  position: relative;
+}
+[data-focus-card]::after {
+  content: "";
   position: absolute;
   left: 0;
   right: 0;
-  text-align: center;
-  font-family: var(--font-display);
-  font-weight: 700;
-  color: var(--color-ink-muted);
-  font-size: 1.5rem;
-  letter-spacing: -0.02em;
-  opacity: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-accent);
+  transform: scaleX(var(--swipe-progress, 0));
+  transform-origin: left center;
+  opacity: 0.85;
   pointer-events: none;
-  will-change: transform, opacity;
-}
-.focus-hint--next {
-  bottom: -2.5rem;
-}
-.focus-hint--prev {
-  top: -2.5rem;
+  will-change: transform;
 }
 
 /* -----------------------------------------------------------------------------
@@ -213,32 +207,9 @@
     opacity: 1;
     transition: none;
   }
-  .swipe-progress {
+  [data-focus-card]::after {
     display: none;
   }
-}
-
-/* -----------------------------------------------------------------------------
- * Swipe-progress indicator
- *
- * A thin 2px bar at the bottom edge of the focus card. It fills from
- * 0→1 (scaleX) as the user drags past the swipe commit threshold,
- * providing a clear visual signal that "you're about to commit". On
- * commit, the bar resets; on cancel, it springs back via the gesture
- * handler's rAF loop. Hidden entirely under reduced motion.
- * --------------------------------------------------------------------------- */
-.swipe-progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  background: var(--color-accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-  opacity: 0.6;
-  pointer-events: none;
-  will-change: transform, opacity;
 }
 
 /* -----------------------------------------------------------------------------

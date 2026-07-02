@@ -78,15 +78,17 @@ function updateDOM(): void {
   mount.replaceChildren(fresh);
   wire(mount);
 
-  // Animate the hero value count-up after the DOM swap. The hero element
-  // has id="hero-value" (set in render.ts). We find the current record's
-  // latest entry value and pass it to the countup animation. If either
-  // the element or the value is missing, we skip silently.
+  // Animate the hero value count-up after the DOM swap. Reset the hero's
+  // textContent to "0" BEFORE calling animateHero so the countup always
+  // starts from zero (the scoreboard effect — "rolling from zero every
+  // time the record changes"). If either the element or the value is
+  // missing, we skip silently.
   const hero = document.getElementById("hero-value");
   if (hero !== null) {
     const state = getState();
     const record = state.records.find((r) => r.id === state.currentRecordId);
     if (record !== undefined && record.entries.length > 0) {
+      hero.textContent = "0";
       void animateHero(hero, record.entries[0]!.value);
     }
   }
@@ -156,6 +158,12 @@ function wire(root: HTMLElement): void {
   const loadExamplesBtn = root.querySelector<HTMLButtonElement>('[data-action="load-examples"]');
   if (loadExamplesBtn !== null) {
     loadExamplesBtn.addEventListener("click", loadExamples);
+  }
+
+  // "CANCEL" button in the new-record form (close form, return to focus)
+  const closeNewBtn = root.querySelector<HTMLButtonElement>('[data-action="close-new"]');
+  if (closeNewBtn !== null) {
+    closeNewBtn.addEventListener("click", () => closeNewRecord());
   }
 }
 

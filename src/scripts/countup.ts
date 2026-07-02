@@ -2,29 +2,34 @@
  * rec-ord — Hero value count-up animation
  *
  * Provides `animateHero(element, targetValue)` which uses countup.js to
- * roll the hero number from its current text content up (or down) to the
- * target value. The library is dynamically imported so it stays out of
- * the initial bundle — it's only needed when the hero value changes.
+ * roll the hero number from 0 up to the target value. The library is
+ * statically imported so it's always available — the ~5kb gzipped cost
+ * is acceptable for this app and avoids the dynamic-import resolution
+ * failures that were causing the animation to be invisible.
  *
  * Design decisions:
- *   - Lazy import: `await import("countup.js")` keeps the initial JS
- *     payload small. The animation is a progressive enhancement — if
- *     the import fails (offline, network error), the element's existing
- *     text content (set by render.ts) remains visible.
+ *   - Static import: `import { CountUp } from "countup.js"` ensures the
+ *     module is always bundled and available. The previous dynamic import
+ *     (`await import("countup.js")`) caused code-splitting issues in
+ *     Astro/Vite production builds where the chunk URL could be incorrect.
+ *   - Always starts from 0: the scoreboard effect of "rolling from zero"
+ *     every time the record changes is more visually impactful than
+ *     rolling from the current value. The caller sets textContent to "0"
+ *     before calling this function.
  *   - Reduced-motion: when `prefers-reduced-motion` is active, we skip
- *     the animation entirely and set the value directly. The user sees
- *     the number update instantly without any rolling effect.
+ *     the animation entirely and set the value directly.
  *   - The function is async (returns `Promise<void>`) but callers use
  *     `void animateHero(...)` — they don't need to await the animation.
  *   - If CountUp reports an error after `.start()`, we fall back to
  *     setting `textContent` directly so the value is never blank.
  */
 
+import { CountUp } from "countup.js";
 import { formatValue, prefersReducedMotion } from "./motion";
 
 /**
- * Animate the hero element's displayed value from its current content
- * to `targetValue` using a count-up effect.
+ * Animate the hero element's displayed value from 0 to `targetValue`
+ * using a count-up effect.
  *
  * @param element - The `<h1>` element displaying the hero value.
  * @param targetValue - The numeric value to animate toward.
@@ -40,18 +45,12 @@ export async function animateHero(
   }
 
   try {
-    const mod = await import("countup.js");
-    const CountUp = mod.CountUp;
-
-    // Parse the current text content as the start value. If it's not a
-    // valid number (e.g. "—"), fall back to 0.
-    const currentText = element.textContent ?? "";
-    const startValue = Number.parseFloat(currentText);
-    const start = Number.isFinite(startValue) ? startValue : 0;
-
+    // Always start from 0 — the scoreboard effect. The caller is
+    // responsible for setting element.textContent to "0" before calling
+    // this function (done in app.ts updateDOM).
     const counter = new CountUp(element, targetValue, {
-      startVal: start,
-      duration: 1.2,
+      startVal: 0,
+      duration: 1.5,
       useEasing: true,
       useGrouping: false,
       decimalPlaces: 1,
@@ -65,8 +64,8 @@ export async function animateHero(
       element.textContent = formatValue(targetValue);
     }
   } catch {
-    // Dynamic import failed — graceful degradation: the element already
-    // has the correct value set by render.ts, so nothing to do.
+    // Graceful degradation: the element already has the correct value
+    // set by render.ts, so nothing to do.
     element.textContent = formatValue(targetValue);
   }
 }
