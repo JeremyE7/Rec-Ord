@@ -221,6 +221,17 @@ function renderFocus(state: AppState): HTMLElement {
   // Current card content (context label + hero + stats, when applicable).
   section.append(renderFocusInner(record, latest));
 
+  // Swipe-progress indicator: a thin 2px bar at the bottom edge of the
+  // focus card that fills from 0→1 as the user drags vertically. The
+  // gesture handler updates its `transform: scaleX(progress)` during
+  // drag. Styled in motion.css. Only present on the collapsed focus
+  // card (not expanded, not grid).
+  const swipeProgress = document.createElement("div");
+  swipeProgress.className = "swipe-progress";
+  swipeProgress.dataset.swipeProgress = "true";
+  swipeProgress.setAttribute("aria-hidden", "true");
+  section.append(swipeProgress);
+
   // Edge hint: a small text whisper of the adjacent record's hero, just
   // below the current card (for swipe-up → next) or just above (for
   // swipe-down → prev). The hint is invisible by default — the gesture
@@ -306,9 +317,10 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   heroWrap.style.viewTransitionName = VT_HERO;
 
   const value = document.createElement("h1");
+  value.id = "hero-value";
   value.className =
     "font-display font-extrabold leading-[0.9] tracking-[-0.04em] text-accent " +
-    "text-[clamp(8.5rem,38vw,18rem)] " +
+    "text-[clamp(10rem,42vw,22rem)] " +
     "text-shadow-[0_0_40px_rgba(250,204,21,0.25),0_0_80px_rgba(250,204,21,0.12)]";
   value.textContent = formatValue(latest.value);
 
@@ -826,6 +838,14 @@ function renderGridCell(
   valueEl.textContent = latest
     ? `${formatValue(latest.value)} ${record.unit}`
     : "—";
+  // Re-introduce the shared element morph for the current record's hero
+  // value. Applied to JUST the value element (not the whole cell/section)
+  // so the browser morphs the big focus card number into this small row
+  // number without the wobble that occurred when the entire section had
+  // the view-transition-name.
+  if (isCurrent) {
+    valueEl.style.viewTransitionName = VT_HERO;
+  }
   right.append(valueEl);
 
   const deltaEl = document.createElement("span");

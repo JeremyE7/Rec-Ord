@@ -32,6 +32,7 @@
  */
 
 import { flushSave, getSeedData, loadState, normalize, saveState } from "./persistence";
+import { animateHero } from "./countup";
 import { attachGestures, attachRowSwipe, type GestureHandlers } from "./gestures";
 import { commit, makeEntry, makeRecord, sortEntries } from "./motion";
 import { armDeleteConfirm, consumeDeleteConfirm, onRerender, renderApp, VIEW_ATTRS } from "./render";
@@ -76,6 +77,19 @@ function updateDOM(): void {
   const fresh = renderApp(getState());
   mount.replaceChildren(fresh);
   wire(mount);
+
+  // Animate the hero value count-up after the DOM swap. The hero element
+  // has id="hero-value" (set in render.ts). We find the current record's
+  // latest entry value and pass it to the countup animation. If either
+  // the element or the value is missing, we skip silently.
+  const hero = document.getElementById("hero-value");
+  if (hero !== null) {
+    const state = getState();
+    const record = state.records.find((r) => r.id === state.currentRecordId);
+    if (record !== undefined && record.entries.length > 0) {
+      void animateHero(hero, record.entries[0]!.value);
+    }
+  }
 }
 
 function rerender(): void {

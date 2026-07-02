@@ -4,26 +4,43 @@
  * Single source of truth for all gestural input. Wires Pointer Events
  * (single-finger swipes + multi-pointer pinch + long-press timer) to a
  * set of named handlers. Designed to be attached to a single root
- * element (`#app`) and route by the current view.
+ * element (the `<body>`) and route by the current view.
  *
- * Threshold constants (locked per spec):
- *   - swipe commit:   |delta| > 60px  OR  |delta|/dt > 0.4 px/ms
- *   - long press:     400ms hold, with < 10px of movement
- *   - press signal:   scale to 0.97 added at 250ms (subtle "I'm registering")
- *   - pinch out:      currentDist / startDist >= 1.3
- *   - pinch in:       currentDist / startDist <= 0.7
+ * Threshold constants:
+ *   - axis lock:         12px (was 8px) — more stable, no premature lock
+ *   - swipe commit:      |delta| > 60px  OR  |delta|/dt > 0.4 px/ms
+ *   - long press:        500ms hold, with < 14px of movement
+ *   - press signal:      scale to 0.97 added at 200ms (subtle "I'm registering")
+ *   - pinch out:         currentDist / startDist >= 1.25
+ *   - pinch in:          currentDist / startDist <= 0.75
  *
  * Live drag: while a vertical swipe is in progress, the focus card is
- * translated by `translateY(dy)` and its opacity is reduced (1 - min(|dy|/400, 0.4))
- * so the user feels they're pulling the card. On commit, the transform is
- * left in place so the browser captures the dragged rect as the "old"
- * snapshot — this is what makes the release feel continuous. On cancel,
- * the card springs back to translateY(0) with the standard cubic-bezier
- * overshoot.
+ * translated by `translateY(dy)` and its opacity is reduced. Updates are
+ * coalesced through `requestAnimationFrame` so rapid `pointermove`
+ * events (60+ Hz on some mobile devices) don't cause layout thrashing.
+ * On commit, the transform is left in place so the browser captures the
+ * dragged rect as the "old" snapshot — this is what makes the release
+ * feel continuous. On cancel, a spring-physics `requestAnimationFrame`
+ * loop lerps the card and hints back to translateY(0) (replaces the
+ * previous `WAAPI` `card.animate(...)` for a smoother feel).
  *
  * Pinch: on the SECOND pointerdown, any in-progress single-pointer drag
  * is cancelled and pinch tracking takes over. A single flag prevents
  * the same pinch from triggering twice.
+ *
+ * Haptic: a short vibration fires on successful commit (swipe, long-
+ * press). Uses `navigator.vibrate?.()` so iOS Safari (no-op) is safe.
+ *
+ * Cleanup: all listeners are attached to a single `AbortController`,
+ * whose `abort()` is the cleanup function. This eliminates the manual
+ * removeEventListener chain (and the class of bugs where a listener is
+ * forgotten on teardown).
+ *
+ * Bug fix: gesture state (`dragLocked`, `dragging`, `pinchStartDist`,
+ * `pinchFired`) is now reset UNCONDITIONALLY on every first-pointerdown,
+ * not just when the previous gesture ended cleanly. This fixes the
+ * "gestures stop working after closing the grid view" bug — stale
+ * state from a previous (incomplete) gesture would leak into the next.
  */
 
 import { prefersReducedMotion } from "./motion";
@@ -34,38 +51,29 @@ import { prefersReducedMotion } from "./motion";
 
 const SWIPE_DISTANCE = 60; // px
 const SWIPE_VELOCITY = 0.4; // px/ms
-const LONG_PRESS_MS = 400;
-const PRESS_SIGNAL_MS = 250; // when to start showing the press is registering
-const LONG_PRESS_MOVE = 10; // px of movement allowed before long-press cancels
-const PINCH_OUT = 1.3;
-const PINCH_IN = 0.7;
+const LONG_PRESS_MS = 500;
+const PRESS_SIGNAL_MS = 200;
+const LONG_PRESS_MOVE = 14; // px of movement allowed before long-press cancels
+const PINCH_OUT = 1.25;
+const PINCH_IN = 0.75;
+const AXIS_LOCK_THRESHOLD = 12; // px
 const DRAG_OPACITY_DIVISOR = 400; // |dy|/400, capped at 0.4
 const DRAG_OPACITY_MAX = 0.4;
-// The hint is invisible for the first half of the commit distance
-// (|dy| <= 30px), then fades in linearly to max 0.55 opacity AT the
-// commit threshold (|dy| = 60px). Beyond the threshold it stays at
-// max — the user is about to release, and the hint should be at its
-// strongest "this is what's coming" state. The divisor is
-// SWIPE_DISTANCE itself so progress hits 1 exactly at the threshold.
+const HINT_FADE_START = 0.3; // fraction of threshold where hint starts fading in
 const HINT_MAX_OPACITY = 0.55;
-const SPRING_DURATION_MS = 420;
-const SPRING_EASING = "cubic-bezier(0.34, 1.56, 0.64, 1)";
+const SPRING_LERP = 0.18; // spring stiffness
+const SPRING_VELOCITY_DECAY = 0.85;
+const SPRING_SETTLE_THRESHOLD = 0.1; // px / (px/frame)
+const HAPTIC_MS = 12;
 
 /* ---------------------------------------------------------------------------
  * Public types
  * ------------------------------------------------------------------------- */
 
 export interface GestureHandlers {
-  /**
-   * Vertical swipe upward on the focus card — go to next (older) record.
-   * Return `true` if a commit happened (a view transition was scheduled),
-   * `false` or `undefined` otherwise (gesture should spring back).
-   */
+  /** Vertical swipe upward on the focus card — go to next (older) record. */
   onSwipeUp?: () => boolean | void;
-  /**
-   * Vertical swipe downward — go to previous (newer) record, or collapse
-   * if expanded. Return `true` if a commit happened.
-   */
+  /** Vertical swipe downward — go to previous (newer) record, or collapse. */
   onSwipeDown?: () => boolean | void;
   /** Horizontal swipe right on focus — open the new-record form. */
   onSwipeRight?: () => boolean | void;
@@ -95,23 +103,18 @@ interface ActivePointer {
 
 interface GestureState {
   pointers: Map<number, ActivePointer>;
-  /** The element captured by setPointerCapture for the active gesture. */
   captured: HTMLElement | null;
   capturedPointerId: number | null;
-  /** Long-press timer for the first pointer. */
   longPressTimer: ReturnType<typeof setTimeout> | null;
-  /** Press-signal timer (250ms — adds the .is-pressing class). */
   pressSignalTimer: ReturnType<typeof setTimeout> | null;
-  /** Pinch start distance (only valid while two pointers are down). */
   pinchStartDist: number | null;
-  /** True once a pinch has already fired in the current gesture. */
   pinchFired: boolean;
-  /** Axis the current single-pointer drag has been "locked in" to. */
   dragLocked: "h" | "v" | null;
-  /** Whether the focus card currently has a live drag transform applied. */
   dragging: boolean;
-  /** The element the long-press `is-pressing` class was added to. */
   pressingElement: HTMLElement | null;
+  /** The element the swipe-progress bar was last applied to. Cached so
+   *  the move handler can update it without re-querying the DOM. */
+  swipeProgressEl: HTMLElement | null;
 }
 
 function newState(): GestureState {
@@ -126,6 +129,7 @@ function newState(): GestureState {
     dragLocked: null,
     dragging: false,
     pressingElement: null,
+    swipeProgressEl: null,
   };
 }
 
@@ -152,15 +156,14 @@ function centroid(points: ActivePointer[]): { x: number; y: number } {
 
 /** Returns the element that should be the focus card for live drag. */
 function findFocusCard(root: HTMLElement): HTMLElement | null {
-  // The focus card is the section flagged with data-focus-card in render.ts.
-  // The grid view, new-record view, and empty state also have sections but
-  // with different data attributes, so this selector is unambiguous.
   return root.querySelector<HTMLElement>("[data-focus-card]");
 }
 
-/** Returns the prev or next edge hint (a small text whisper of the
- *  adjacent record's hero, positioned just above/below the focus card),
- *  or null if the hint doesn't exist (e.g. on the first/last record). */
+/** Returns the swipe-progress indicator inside the current focus card, or null. */
+function findSwipeProgress(root: HTMLElement): HTMLElement | null {
+  return root.querySelector<HTMLElement>("[data-swipe-progress]");
+}
+
 function findFocusHint(
   root: HTMLElement,
   position: "prev" | "next",
@@ -182,75 +185,124 @@ function isButton(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.tagName === "BUTTON";
 }
 
+/** Short haptic pulse on commit. Safe on iOS (no-op). */
+function haptic(): void {
+  try {
+    navigator.vibrate?.(HAPTIC_MS);
+  } catch {
+    // Some browsers throw if called in certain contexts; safe to ignore.
+  }
+}
+
 /* ---------------------------------------------------------------------------
- * Spring-back animation
+ * Spring-physics snap-back
+ *
+ * Replaces the previous WAAPI `card.animate(...)` with a manual
+ * `requestAnimationFrame` loop that lerps the inline transform/opacity
+ * back to 0 with a damped spring. Feels smoother and integrates with
+ * the live-drag transform updates (no animation event racing).
  * ------------------------------------------------------------------------- */
 
-/** Springs a single element's inline `transform` back to the given target
- *  string. Reads the current computed transform so the animation starts
- *  from where the user left off. */
-function springBackElement(card: HTMLElement, target: string): void {
-  const reduce = prefersReducedMotion();
-  const current = getComputedStyle(card).transform;
-  const duration = reduce ? 10 : SPRING_DURATION_MS;
-  const easing = reduce ? "linear" : SPRING_EASING;
-  const anim = card.animate(
-    [{ transform: current }, { transform: target }],
-    { duration, easing, fill: "forwards" },
-  );
-  anim.onfinish = () => {
+function springBackElement(card: HTMLElement, axis: "x" | "y"): void {
+  if (prefersReducedMotion()) {
     card.style.transform = "";
-  };
-  anim.oncancel = () => {
-    card.style.transform = "";
-  };
+    card.style.opacity = "";
+    return;
+  }
+  const axisProp = axis === "x" ? "translateX" : "translateY";
+  // Read the current inline transform value. If no transform, current = 0.
+  const m = card.style.transform.match(/-?\d+(\.\d+)?/);
+  let current = m !== null ? parseFloat(m[0]) : 0;
+  if (!Number.isFinite(current)) current = 0;
+  let velocity = 0;
+
+  function tick(): void {
+    const force = (0 - current) * SPRING_LERP;
+    velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
+    current += velocity;
+    card.style.transform = `${axisProp}(${current}px)`;
+    // Opacity mirrors the live-drag formula: 1 - min(|dy|/400, 0.4).
+    const opacity = 1 - Math.min(Math.abs(current) / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
+    card.style.opacity = String(opacity);
+    if (Math.abs(current) > SPRING_SETTLE_THRESHOLD || Math.abs(velocity) > SPRING_SETTLE_THRESHOLD) {
+      requestAnimationFrame(tick);
+    } else {
+      card.style.transform = "";
+      card.style.opacity = "";
+    }
+  }
+  requestAnimationFrame(tick);
 }
 
-/** Spring the current focus card back to `translateY(0)`. */
 function springBack(card: HTMLElement): void {
-  springBackElement(card, "translateY(0)");
+  springBackElement(card, "y");
 }
 
-/** Spring the focus card + both hint elements back to their CSS defaults.
- *  Used on cancel/spring-back of a vertical drag so the card and the
- *  hint whispers snap back to their rest position. */
-function springBackDrag(root: HTMLElement): void {
-  const card = findFocusCard(root);
-  if (card !== null) springBack(card);
-  springBackHint(root, "next");
-  springBackHint(root, "prev");
-}
-
-/** Spring a single edge hint back to translateY(0) and opacity 0. The
- *  hint is invisible at rest — the swipe gesture is the only thing that
- *  makes it appear, so on cancel we animate both the transform and the
- *  opacity back to their CSS defaults. */
 function springBackHint(
   root: HTMLElement,
   position: "prev" | "next",
 ): void {
   const hint = findFocusHint(root, position);
   if (hint === null) return;
-  const reduce = prefersReducedMotion();
-  const currentTransform = getComputedStyle(hint).transform;
-  const currentOpacity = Number(getComputedStyle(hint).opacity) || 0;
-  const duration = reduce ? 10 : SPRING_DURATION_MS;
-  const easing = reduce ? "linear" : SPRING_EASING;
-  const anim = hint.animate(
-    [
-      { transform: currentTransform, opacity: currentOpacity },
-      { transform: "translateY(0)", opacity: 0 },
-    ],
-    { duration, easing, fill: "forwards" },
-  );
-  anim.onfinish = () => {
+  if (prefersReducedMotion()) {
     hint.style.transform = "";
     hint.style.opacity = "";
-  };
-  anim.oncancel = () => {
-    hint.style.transform = "";
-    hint.style.opacity = "";
-  };
+    return;
+  }
+  const hintEl = hint; // alias for closure (TS narrowing)
+  let current = parseFloat((hintEl.style.transform.match(/-?\d+(\.\d+)?/)?.[0]) ?? "0");
+  if (!Number.isFinite(current)) current = 0;
+  let velocity = 0;
+  const startOpacity = Number.parseFloat(hintEl.style.opacity) || 0;
+
+  function tick(): void {
+    const force = (0 - current) * SPRING_LERP;
+    velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
+    current += velocity;
+    hintEl.style.transform = `translateY(${current}px)`;
+    const progress = Math.min(Math.abs(current) / SWIPE_DISTANCE, 1);
+    const hintOpacity = (Math.max(0, (progress - HINT_FADE_START) / (1 - HINT_FADE_START)) * HINT_MAX_OPACITY) * (startOpacity / HINT_MAX_OPACITY || 0);
+    hintEl.style.opacity = String(hintOpacity);
+    if (Math.abs(current) > SPRING_SETTLE_THRESHOLD || Math.abs(velocity) > SPRING_SETTLE_THRESHOLD) {
+      requestAnimationFrame(tick);
+    } else {
+      hintEl.style.transform = "";
+      hintEl.style.opacity = "";
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function springBackDrag(root: HTMLElement): void {
+  const card = findFocusCard(root);
+  if (card !== null) springBack(card);
+  springBackHint(root, "next");
+  springBackHint(root, "prev");
+  // Also reset the swipe-progress bar to scaleX(0).
+  const progress = findSwipeProgress(root);
+  if (progress !== null) {
+    const progressEl = progress; // alias for closure
+    if (prefersReducedMotion()) {
+      progressEl.style.transform = "";
+      progressEl.style.opacity = "";
+    } else {
+      let current = parseFloat((progressEl.style.transform.match(/-?\d+(\.\d+)?/)?.[0]) ?? "0");
+      if (!Number.isFinite(current)) current = 0;
+      let velocity = 0;
+      function tick(): void {
+        const force = (0 - current) * SPRING_LERP;
+        velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
+        current += velocity;
+        progressEl.style.transform = `scaleX(${current})`;
+        if (Math.abs(current) > 0.01 || Math.abs(velocity) > 0.01) {
+          requestAnimationFrame(tick);
+        } else {
+          progressEl.style.transform = "scaleX(0)";
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -258,26 +310,28 @@ function springBackHint(
  * ------------------------------------------------------------------------- */
 
 export interface AttachOptions {
-  /** Function returning the current view, used to gate which gestures fire. */
   getView: () => "focus" | "new" | "grid";
-  /** Function returning whether the current focus card is expanded (edit mode). */
   getExpanded: () => boolean;
-  /** Function returning whether there is at least one record. */
   getHasRecords: () => boolean;
-  /** Container the gestures are attached to (e.g. `#app`). */
   root: HTMLElement;
-  /** The handlers to invoke. */
   handlers: GestureHandlers;
 }
 
 /**
  * Attaches pointer-event listeners to the root element. Returns a cleanup
- * function that removes all listeners and cancels any in-flight animations
- * — call it before re-attaching after a re-render.
+ * function that aborts every listener via a single AbortController — call
+ * it before re-attaching after a re-render or page-load.
  */
 export function attachGestures(opts: AttachOptions): () => void {
   const { root, getView, getExpanded, getHasRecords, handlers } = opts;
   const state = newState();
+  const ac = new AbortController();
+  const opts2 = { signal: ac.signal };
+
+  // rAF coalescing for the live drag — apply the visual transform on the
+  // next animation frame, not on every pointermove event.
+  let dragFrame: number | null = null;
+  let lastDy = 0;
 
   const clearTimers = (): void => {
     if (state.longPressTimer !== null) {
@@ -302,14 +356,13 @@ export function attachGestures(opts: AttachOptions): () => void {
       try {
         state.captured.releasePointerCapture(state.capturedPointerId);
       } catch {
-        // Some browsers throw if the capture is already released; safe to ignore.
+        // Some browsers throw if capture is already released; safe to ignore.
       }
       state.captured = null;
       state.capturedPointerId = null;
     }
   };
 
-  /** Cancel any in-progress drag, snapping the card and hints back if needed. */
   const cancelDrag = (): void => {
     if (state.dragging) {
       springBackDrag(root);
@@ -317,17 +370,68 @@ export function attachGestures(opts: AttachOptions): () => void {
     }
   };
 
+  const applyDragFrame = (): void => {
+    dragFrame = null;
+    if (state.dragLocked !== "v") return;
+    const card = findFocusCard(root);
+    if (card === null) return;
+    state.dragging = true;
+    const absDy = Math.abs(lastDy);
+    const opacity = 1 - Math.min(absDy / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
+    card.style.transform = `translateY(${lastDy}px)`;
+    card.style.opacity = String(opacity);
+    // Hint opacity: ramps in starting at HINT_FADE_START (0.3) of the threshold.
+    const hintProgress = Math.max(
+      0,
+      (Math.min(absDy / SWIPE_DISTANCE, 1) - HINT_FADE_START) / (1 - HINT_FADE_START),
+    );
+    const hintOpacity = hintProgress * HINT_MAX_OPACITY;
+    const nextHint = findFocusHint(root, "next");
+    if (nextHint !== null) {
+      nextHint.style.transform = `translateY(${lastDy}px)`;
+      nextHint.style.opacity = String(hintOpacity);
+    }
+    const prevHint = findFocusHint(root, "prev");
+    if (prevHint !== null) {
+      prevHint.style.transform = `translateY(${lastDy}px)`;
+      prevHint.style.opacity = String(hintOpacity);
+    }
+    // Swipe progress bar: scaleX from 0 to 1 as the user crosses the threshold.
+    if (state.swipeProgressEl === null) {
+      state.swipeProgressEl = findSwipeProgress(root);
+    }
+    if (state.swipeProgressEl !== null) {
+      const progress = Math.min(absDy / SWIPE_DISTANCE, 1);
+      state.swipeProgressEl.style.transform = `scaleX(${progress})`;
+      state.swipeProgressEl.style.opacity = String(0.6 + 0.4 * progress);
+    }
+  };
+
+  const scheduleDragFrame = (): void => {
+    if (dragFrame !== null) return;
+    dragFrame = requestAnimationFrame(applyDragFrame);
+  };
+
   const onPointerDown = (e: PointerEvent): void => {
-    // Ignore non-primary buttons (right-click etc.).
     if (e.button !== 0 && e.pointerType === "mouse") return;
 
-    // If a second pointer arrives while a single-pointer drag is in
-    // progress, cancel the drag and start pinch tracking.
+    // Reset state UNCONDITIONALLY on every first-pointerdown. This is the
+    // fix for the "gestures stop working after closing the grid" bug —
+    // stale state from a previous incomplete gesture would otherwise leak
+    // into the next one and bail the handlers out early.
+    if (state.pointers.size === 0) {
+      state.dragLocked = null;
+      state.dragging = false;
+      state.pinchStartDist = null;
+      state.pinchFired = false;
+      state.swipeProgressEl = null;
+    }
+
+    // Second pointer down: cancel any single-pointer drag and start pinch.
     if (state.pointers.size >= 1) {
       cancelDrag();
       removePressingClass();
       clearTimers();
-      // Add the second pointer.
       const p: ActivePointer = {
         id: e.pointerId,
         startX: e.clientX,
@@ -337,7 +441,6 @@ export function attachGestures(opts: AttachOptions): () => void {
         downTime: e.timeStamp,
       };
       state.pointers.set(e.pointerId, p);
-      // Initialize pinch distance now that we have two pointers.
       const points = Array.from(state.pointers.values());
       if (points.length === 2) {
         state.pinchStartDist = distance(points[0]!, points[1]!);
@@ -356,45 +459,32 @@ export function attachGestures(opts: AttachOptions): () => void {
       downTime: e.timeStamp,
     };
     state.pointers.set(e.pointerId, p);
-    state.dragLocked = null;
-    state.dragging = false;
 
-    // Don't capture the pointer when the press started on a form field
-    // or a button. Those elements must receive their own pointer events
-    // — capturing the pointer on the gesture root would redirect the
-    // subsequent `pointerup` to the root, and the browser would never
-    // synthesize a `click` on the button. We still record the pointer
-    // in `state.pointers` so a subsequent second pointer can start a
-    // pinch, but no capture, no long-press timer, no live drag.
     if (isFormElement(e.target) || isButton(e.target)) {
+      // Don't capture — let the form/button handle its own events. The
+      // pointer is still recorded in `state.pointers` so a second pointer
+      // arriving can start a pinch, but no capture, no long-press, no drag.
       return;
     }
 
-    // Capture subsequent move events on the root.
     try {
       root.setPointerCapture(e.pointerId);
       state.captured = root;
       state.capturedPointerId = e.pointerId;
     } catch {
-      // Some browsers may refuse capture in certain contexts; the document
-      // listeners below will still receive the events.
+      // Some browsers may refuse capture in certain contexts.
     }
 
     const view = getView();
     if (view === "new" || view === "grid") {
-      // New-record view: only horizontal swipe left is meaningful.
-      // Grid view: pinches and cell-taps are handled separately.
-      // Both: don't start a long-press timer.
+      // New-record view: only horizontal swipe left. Grid view: pinches +
+      // cell-taps only. Don't start a long-press timer.
       return;
     }
 
     if (view === "focus") {
-      // Only schedule a long press if there's something to expand.
       if (!getHasRecords()) return;
 
-      // 250ms press-signal: scale the focus card slightly to signal
-      // the press is being detected. Helps the long-press feel deliberate
-      // rather than ambiguous. Suppress under reduced motion.
       if (!prefersReducedMotion()) {
         const card = findFocusCard(root);
         if (card !== null) {
@@ -407,13 +497,12 @@ export function attachGestures(opts: AttachOptions): () => void {
         }
       }
 
-      // 400ms long press → expand.
       state.longPressTimer = setTimeout(() => {
         state.longPressTimer = null;
         removePressingClass();
-        // Only fire if the finger hasn't moved much and we're still on focus.
         if (getView() === "focus" && !getExpanded() && getHasRecords()) {
-          handlers.onLongPress?.();
+          const result = handlers.onLongPress?.();
+          if (result === true) haptic();
         }
       }, LONG_PRESS_MS);
     }
@@ -434,20 +523,19 @@ export function attachGestures(opts: AttachOptions): () => void {
       if (ratio >= PINCH_OUT) {
         state.pinchFired = true;
         if (getView() === "focus" && getHasRecords()) {
-          handlers.onPinchOut?.(c);
+          const result = handlers.onPinchOut?.(c);
+          if (result === true) haptic();
         }
       } else if (ratio <= PINCH_IN) {
         state.pinchFired = true;
         if (getView() === "grid") {
-          handlers.onPinchIn?.(c);
+          const result = handlers.onPinchIn?.(c);
+          if (result === true) haptic();
         }
       }
-      // While pinching, don't process single-pointer drag logic.
       return;
     }
 
-    // Single-pointer path: only meaningful on focus, and only for the
-    // very first pointer (the one that started the gesture).
     if (state.pointers.size !== 1) return;
     if (e.pointerId !== state.capturedPointerId) return;
     if (getView() !== "focus") return;
@@ -457,66 +545,25 @@ export function attachGestures(opts: AttachOptions): () => void {
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
 
-    // If the user moves more than the long-press tolerance, kill the
-    // long-press timer and the press-signal class. (Don't kill it for
-    // tiny jitter — that would make long-press feel unstable.)
     const moved = Math.max(absDx, absDy);
     if (moved > LONG_PRESS_MOVE) {
       if (state.longPressTimer !== null) {
         clearTimeout(state.longPressTimer);
         state.longPressTimer = null;
       }
-      // Once we've moved past tolerance, the press-signal class also
-      // has to come off (it would otherwise stick around even when the
-      // user has decided to swipe).
       removePressingClass();
     }
 
-    // Lock to an axis as soon as the movement is unambiguous.
-    if (state.dragLocked === null && (absDx > 8 || absDy > 8)) {
+    // Axis lock — only lock once we're past the threshold; never re-lock.
+    if (state.dragLocked === null && (absDx > AXIS_LOCK_THRESHOLD || absDy > AXIS_LOCK_THRESHOLD)) {
       state.dragLocked = absDx > absDy ? "h" : "v";
     }
 
     if (state.dragLocked === "v") {
-      // Vertical drag — translate the current card with the finger. The
-      // edge hints (next/prev) follow the card vertically and fade in
-      // past 50% of the swipe commit distance so the user gets a subtle
-      // preview of what's coming without an always-visible card stack.
-      // The hint is invisible at rest, peaks at HINT_MAX_OPACITY when
-      // |dy| reaches the commit threshold, and is `aria-hidden` +
-      // `pointer-events: none` so it never affects layout or interaction.
-      const card = findFocusCard(root);
-      if (card === null) return;
-      state.dragging = true;
-      const opacity = 1 - Math.min(absDy / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
-      card.style.transform = `translateY(${dy}px)`;
-      card.style.opacity = String(opacity);
-      // Hint opacity: 0 for |dy| <= 30px, ramps linearly from 0 to
-      // HINT_MAX_OPACITY between 30px and 60px, then stays at max.
-      // At |dy| = 60 (the commit threshold) the hint is at 0.55 — the
-      // strongest "this is what's coming" state, just before release.
-      const hintProgress = Math.max(0, (Math.min(absDy / SWIPE_DISTANCE, 1) - 0.5) * 2);
-      const hintOpacity = hintProgress * HINT_MAX_OPACITY;
-      // Both hints follow the current card vertically so they stay
-      // visually anchored to it ("just below" / "just above"). Only the
-      // one that exists (prev or next) actually has a DOM node to update.
-      const nextHint = findFocusHint(root, "next");
-      if (nextHint !== null) {
-        nextHint.style.transform = `translateY(${dy}px)`;
-        nextHint.style.opacity = String(hintOpacity);
-      }
-      const prevHint = findFocusHint(root, "prev");
-      if (prevHint !== null) {
-        prevHint.style.transform = `translateY(${dy}px)`;
-        prevHint.style.opacity = String(hintOpacity);
-      }
-    } else if (state.dragLocked === "h") {
-      // No live horizontal drag — the spec keeps the horizontal push
-      // transition clean (the form slides in/out as a unit). But we
-      // still want some feedback that the gesture is recognized.
-      // Cheap approach: leave the card alone; on release the
-      // `commit` will play the push transition.
+      lastDy = dy;
+      scheduleDragFrame();
     }
+    // Horizontal drag: no live visual (the push transition handles it).
   };
 
   const commitVertical = (dy: number, dt: number): boolean => {
@@ -524,13 +571,14 @@ export function attachGestures(opts: AttachOptions): () => void {
     const passesDistance = absDy > SWIPE_DISTANCE;
     const passesVelocity = dt > 0 && absDy / dt > SWIPE_VELOCITY;
     if (!passesDistance && !passesVelocity) return false;
-
     if (dy < 0) {
-      // Swipe up — next (older) record.
-      return handlers.onSwipeUp?.() === true;
+      const result = handlers.onSwipeUp?.();
+      if (result === true) haptic();
+      return result === true;
     }
-    // Swipe down — previous record or collapse edit.
-    return handlers.onSwipeDown?.() === true;
+    const result = handlers.onSwipeDown?.();
+    if (result === true) haptic();
+    return result === true;
   };
 
   const commitHorizontal = (dx: number, dt: number): boolean => {
@@ -539,12 +587,18 @@ export function attachGestures(opts: AttachOptions): () => void {
     const passesVelocity = dt > 0 && absDx / dt > SWIPE_VELOCITY;
     if (!passesDistance && !passesVelocity) return false;
     if (dx > 0) {
-      // Swipe right on focus → open new-record form.
-      if (getView() === "focus") return handlers.onSwipeRight?.() === true;
+      if (getView() === "focus") {
+        const result = handlers.onSwipeRight?.();
+        if (result === true) haptic();
+        return result === true;
+      }
       return false;
     }
-    // Swipe left on new-record → go back to focus.
-    if (getView() === "new") return handlers.onSwipeLeft?.() === true;
+    if (getView() === "new") {
+      const result = handlers.onSwipeLeft?.();
+      if (result === true) haptic();
+      return result === true;
+    }
     return false;
   };
 
@@ -553,7 +607,6 @@ export function attachGestures(opts: AttachOptions): () => void {
     if (p === undefined) return;
     const wasFirstPointer = state.capturedPointerId === e.pointerId;
 
-    // Capture the values we need BEFORE we delete the pointer.
     const startX = p.startX;
     const startY = p.startY;
     const endX = p.currentX;
@@ -564,22 +617,18 @@ export function attachGestures(opts: AttachOptions): () => void {
     clearTimers();
     removePressingClass();
 
-    // If we drop below 2 pointers, reset pinch state.
     if (state.pointers.size < 2) {
       state.pinchStartDist = null;
       state.pinchFired = false;
     }
 
     if (!wasFirstPointer) {
-      // A non-primary pointer (the second finger) lifted. If a pinch
-      // is in progress, end it; the next gesture starts fresh.
       releaseCapture();
       return;
     }
 
     if (!commit) {
-      // pointercancel or no-commit release.
-      if (state.dragging) {
+      if (state.dragging || state.dragLocked !== null) {
         springBackDrag(root);
         state.dragging = false;
       }
@@ -588,9 +637,6 @@ export function attachGestures(opts: AttachOptions): () => void {
     }
 
     if (state.pointers.size > 0) {
-      // The first pointer lifted but there's still a pointer down
-      // (rare; usually the user lifted the first finger mid-pinch).
-      // End the gesture cleanly.
       releaseCapture();
       return;
     }
@@ -601,14 +647,12 @@ export function attachGestures(opts: AttachOptions): () => void {
     const absDy = Math.abs(dy);
     const dt = Math.max(1, e.timeStamp - pointerDownTime);
 
-    // Axis-decided commit: prefer vertical if we locked vertical.
     let didCommit = false;
     if (state.dragLocked === "v" || (state.dragLocked === null && absDy > absDx)) {
       didCommit = commitVertical(dy, dt);
     } else if (state.dragLocked === "h" || (state.dragLocked === null && absDx > absDy)) {
       didCommit = commitHorizontal(dx, dt);
     } else {
-      // No dominant axis: try both, prefer vertical.
       didCommit = commitVertical(dy, dt) || commitHorizontal(dx, dt);
     }
 
@@ -616,19 +660,10 @@ export function attachGestures(opts: AttachOptions): () => void {
       const card = findFocusCard(root);
       if (card !== null) {
         if (didCommit) {
-          // Leave the transform in place. The view transition snapshots
-          // the dragged rect as the "old" focus card, and the new
-          // focus card (no transform) is the "new" snapshot. The named
-          // `record-card` group crossfades the two, producing the
-          // "premium" continuous release feel: the card animates from
-          // the finger's release point into the new record.
-          // We DO clear the inline opacity (the new state has full
-          // opacity, and leaving 0.7-ish on the pseudo-element would
-          // dim the crossfade).
+          // Leave the transform in place — the view-transition snapshots
+          // the dragged rect as the "old" focus card. Clear opacity so
+          // the crossfade isn't dimmed.
           card.style.opacity = "";
-          // Reset the hints back to their invisible CSS defaults. The
-          // new record may or may not have adjacent records; we leave
-          // the re-render to set fresh hint nodes (or none at all).
           const nextHint = findFocusHint(root, "next");
           if (nextHint !== null) {
             nextHint.style.transform = "";
@@ -639,10 +674,13 @@ export function attachGestures(opts: AttachOptions): () => void {
             prevHint.style.transform = "";
             prevHint.style.opacity = "";
           }
+          // The swipe-progress bar: hide it on commit (the re-render
+          // will create a fresh focus card with a new one).
+          if (state.swipeProgressEl !== null) {
+            state.swipeProgressEl.style.transform = "scaleX(0)";
+            state.swipeProgressEl.style.opacity = "";
+          }
         } else {
-          // No commit — spring the card and hints back to their rest
-          // position. The hints animate both transform and opacity to
-          // their invisible CSS default.
           springBackDrag(root);
         }
       }
@@ -655,24 +693,35 @@ export function attachGestures(opts: AttachOptions): () => void {
   const onPointerUp = (e: PointerEvent): void => endPointer(e, true);
   const onPointerCancel = (e: PointerEvent): void => endPointer(e, false);
 
-  root.addEventListener("pointerdown", onPointerDown);
-  root.addEventListener("pointermove", onPointerMove);
-  root.addEventListener("pointerup", onPointerUp);
-  root.addEventListener("pointercancel", onPointerCancel);
-  // `lostpointercapture` fires when the browser revokes capture (e.g. on
-  // contextmenu or alt-tab). Treat it as a cancel.
-  root.addEventListener("lostpointercapture", (e: Event) => {
-    if (e instanceof PointerEvent) endPointer(e, false);
-  });
+  root.addEventListener("pointerdown", onPointerDown, opts2);
+  root.addEventListener("pointermove", onPointerMove, opts2);
+  root.addEventListener("pointerup", onPointerUp, opts2);
+  root.addEventListener("pointercancel", onPointerCancel, opts2);
+  root.addEventListener(
+    "lostpointercapture",
+    (e: Event) => {
+      if (e instanceof PointerEvent) endPointer(e, false);
+    },
+    opts2,
+  );
+
+  // Capture-phase: some browsers fire scroll/pinch-zoom on the document
+  // before we get the chance. This is a no-op on iOS Safari and a safety
+  // net on Android.
+  const onTouchMovePrevent = (e: TouchEvent): void => {
+    if (state.pointers.size > 0) e.preventDefault();
+  };
+  root.addEventListener("touchmove", onTouchMovePrevent, { ...opts2, passive: false });
 
   return () => {
+    if (dragFrame !== null) {
+      cancelAnimationFrame(dragFrame);
+      dragFrame = null;
+    }
     clearTimers();
     removePressingClass();
     releaseCapture();
-    root.removeEventListener("pointerdown", onPointerDown);
-    root.removeEventListener("pointermove", onPointerMove);
-    root.removeEventListener("pointerup", onPointerUp);
-    root.removeEventListener("pointercancel", onPointerCancel);
+    ac.abort();
   };
 }
 
@@ -690,8 +739,10 @@ export interface RowSwipeHandlers {
 }
 
 export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): () => void {
-  const ROW_THRESHOLD = 50; // px
-  const ROW_OPACITY_DIVISOR = 100; // |dx|/100, capped at 0.6
+  const ROW_THRESHOLD = 50;
+  const ROW_OPACITY_DIVISOR = 100;
+  const ac = new AbortController();
+  const opts2 = { signal: ac.signal };
 
   let startX = 0;
   let startY = 0;
@@ -727,7 +778,6 @@ export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): ()
       axis = absDx > absDy ? "h" : "v";
     }
     if (axis === "h") {
-      // Only translate on leftward swipes (negative dx).
       const tx = Math.min(0, dx);
       row.style.transform = `translateX(${tx}px)`;
       const opacity = 1 - Math.min(absDx / ROW_OPACITY_DIVISOR, 0.6);
@@ -745,38 +795,41 @@ export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): ()
       // ignore
     }
     if (axis === "h" && dx < -ROW_THRESHOLD) {
-      // Delete: clear inline styles and call the handler. The handler
-      // will re-render, which removes the row from the DOM.
       row.style.transform = "";
       row.style.opacity = "";
       handlers.onDelete();
     } else {
-      // Spring back.
-      const reduce = prefersReducedMotion();
-      const anim = row.animate(
-        [{ transform: getComputedStyle(row).transform }, { transform: "translateX(0)" }],
-        {
-          duration: reduce ? 10 : 320,
-          easing: reduce ? "linear" : "cubic-bezier(0.34, 1.56, 0.64, 1)",
-          fill: "forwards",
-        },
-      );
-      anim.onfinish = () => {
+      // Spring back via rAF.
+      if (prefersReducedMotion()) {
         row.style.transform = "";
         row.style.opacity = "";
-      };
+        return;
+      }
+      let current = parseFloat((row.style.transform.match(/-?\d+(\.\d+)?/)?.[0]) ?? "0");
+      if (!Number.isFinite(current)) current = 0;
+      let velocity = 0;
+      function tick(): void {
+        const force = (0 - current) * SPRING_LERP;
+        velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
+        current += velocity;
+        row.style.transform = `translateX(${current}px)`;
+        if (Math.abs(current) > 0.1 || Math.abs(velocity) > 0.1) {
+          requestAnimationFrame(tick);
+        } else {
+          row.style.transform = "";
+          row.style.opacity = "";
+        }
+      }
+      requestAnimationFrame(tick);
     }
   };
 
-  row.addEventListener("pointerdown", onDown);
-  row.addEventListener("pointermove", onMove);
-  row.addEventListener("pointerup", onUp);
-  row.addEventListener("pointercancel", onUp);
+  row.addEventListener("pointerdown", onDown, opts2);
+  row.addEventListener("pointermove", onMove, opts2);
+  row.addEventListener("pointerup", onUp, opts2);
+  row.addEventListener("pointercancel", onUp, opts2);
 
   return () => {
-    row.removeEventListener("pointerdown", onDown);
-    row.removeEventListener("pointermove", onMove);
-    row.removeEventListener("pointerup", onUp);
-    row.removeEventListener("pointercancel", onUp);
+    ac.abort();
   };
 }
