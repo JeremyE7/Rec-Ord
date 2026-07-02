@@ -45,6 +45,18 @@ const APP_ID = "app";
  * State helpers
  * ------------------------------------------------------------------------- */
 
+/**
+ * Tracks the last-rendered record id so we know when to re-run the
+ * hero count-up animation. The count-up is a "scoreboard" effect and
+ * should ONLY fire when the user changes record (swipe up/down, pick
+ * from grid). It must NOT fire on in-place re-renders like adding an
+ * entry, toggling edit mode, or the delete-confirm label flip.
+ * A sentinel of `null` means "first render ever" — always animate.
+ */
+let lastRenderedRecordId: string | null | undefined = undefined;
+/** Tracks the last-rendered hero value (number) for the same reason. */
+let lastRenderedHeroValue: number | undefined = undefined;
+
 function currentRecord(state: AppState): Record | null {
   if (state.currentRecordId === null) return null;
   return state.records.find((r) => r.id === state.currentRecordId) ?? null;
@@ -78,19 +90,33 @@ function updateDOM(): void {
   mount.replaceChildren(fresh);
   wire(mount);
 
-  // Animate the hero value count-up after the DOM swap. Reset the hero's
-  // textContent to "0" BEFORE calling animateHero so the countup always
-  // starts from zero (the scoreboard effect — "rolling from zero every
-  // time the record changes"). If either the element or the value is
-  // missing, we skip silently.
-  const hero = document.getElementById("hero-value");
-  if (hero !== null) {
-    const state = getState();
-    const record = state.records.find((r) => r.id === state.currentRecordId);
-    if (record !== undefined && record.entries.length > 0) {
-      hero.textContent = "0";
-      void animateHero(hero, record.entries[0]!.value);
+  // Animate the hero value count-up ONLY when the current record or its
+  // latest value changed. The count-up is a "scoreboard" effect that
+  // should fire on swipe between records, on initial render, and when
+  // the latest entry value changes (e.g. adding a new entry to the
+  // currently-focused record). It must NOT fire on in-place re-renders
+  // like toggling edit mode, opening/closing the inline add-entry form,
+  // or the delete-confirm label flip.
+  const state = getState();
+  const record = state.records.find((r) => r.id === state.currentRecordId);
+  if (record !== undefined && record.entries.length > 0) {
+    const latestValue = record.entries[0]!.value;
+    const recordChanged = lastRenderedRecordId !== state.currentRecordId;
+    const valueChanged = lastRenderedHeroValue !== latestValue;
+    const isFirstRender = lastRenderedRecordId === undefined;
+    if (isFirstRender || recordChanged || valueChanged) {
+      const hero = document.getElementById("hero-value");
+      if (hero !== null) {
+        hero.textContent = "0";
+        void animateHero(hero, latestValue);
+      }
     }
+    lastRenderedRecordId = state.currentRecordId;
+    lastRenderedHeroValue = latestValue;
+  } else {
+    // No record to animate — keep the trackers in sync.
+    lastRenderedRecordId = state.currentRecordId;
+    lastRenderedHeroValue = undefined;
   }
 }
 
@@ -645,6 +671,11 @@ function init(): void {
   // double-subscription if `astro:page-load` fires more than once
   // (e.g. dev-mode HMR, future client-side routing).
   teardown();
+
+  // Reset the count-up trackers so the first render after init counts
+  // from 0 (it's a "first render" scenario).
+  lastRenderedRecordId = undefined;
+  lastRenderedHeroValue = undefined;
 
   // Load persisted data.
   const loaded = normalize(loadState());

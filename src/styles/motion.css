@@ -162,21 +162,19 @@
 }
 
 /* -----------------------------------------------------------------------------
- * Swipe-progress indicator (CSS-only, driven by --swipe-progress custom
- * property set by gestures.ts during drag).
+ * Swipe-progress indicator
  *
- * A thin 2px bar at the bottom edge of the focus card. It fills from
- * 0→1 (scaleX) as the user drags vertically, providing a clear visual
- * signal that "you're about to commit". The progress value is set as a
- * CSS custom property on the [data-focus-card] element by the gesture
- * handler — no DOM element needed. Hidden entirely under reduced motion.
+ * A thin 2px bar fixed to the bottom edge of the viewport. It fills
+ * from 0→1 (scaleX) as the user drags vertically, providing a clear
+ * visual signal that "you're about to commit". The progress value is
+ * set as the `--swipe-progress` custom property on the element by the
+ * gesture handler. The element lives in index.astro (not in the #app
+ * subtree) so it survives every re-render and is always anchored to
+ * the viewport, not to the focus card's bounding box. Hidden entirely
+ * under reduced motion.
  * --------------------------------------------------------------------------- */
-[data-focus-card] {
-  position: relative;
-}
-[data-focus-card]::after {
-  content: "";
-  position: absolute;
+.swipe-progress {
+  position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
@@ -184,9 +182,10 @@
   background: var(--color-accent);
   transform: scaleX(var(--swipe-progress, 0));
   transform-origin: left center;
-  opacity: 0.85;
+  opacity: 0.9;
   pointer-events: none;
   will-change: transform;
+  z-index: 50;
 }
 
 /* -----------------------------------------------------------------------------
@@ -208,6 +207,9 @@
     transition: none;
   }
   [data-focus-card]::after {
+    display: none;
+  }
+  .swipe-progress {
     display: none;
   }
 }

@@ -29,9 +29,8 @@
  * the spring doesn't over-correct when the value is close to 0.
  *
  * Swipe progress: a CSS custom property `--swipe-progress` (0..1) is set
- * on the focus card during drag. A `::after` pseudo-element in CSS
- * renders a thin 2px bar at the bottom of the card, scaled by this
- * property. No DOM element needed.
+ * on the `#swipe-progress` element (a fixed-position 2px bar at the
+ * bottom of the viewport — see index.astro) during drag.
  *
  * Pinch: on the SECOND pointerdown, any in-progress single-pointer drag
  * is cancelled and pinch tracking takes over. A single flag prevents
@@ -71,8 +70,8 @@ const AXIS_LOCK_THRESHOLD = 12; // px
 const DRAG_OPACITY_DIVISOR = 400; // |dy|/400, capped at 0.4
 const DRAG_OPACITY_MAX = 0.4;
 const MAX_DRAG_DY = 500; // px — cap lastDy to prevent over-fling
-const SPRING_LERP = 0.22; // spring stiffness (critically-damped)
-const SPRING_VELOCITY_DECAY = 0.78; // more damping = less oscillation
+const SPRING_LERP = 0.30; // spring stiffness (one subtle overshoot)
+const SPRING_VELOCITY_DECAY = 0.80; // damping tuned for a single bouncy overshoot
 const SPRING_SETTLE_THRESHOLD = 0.1; // px / (px/frame)
 const HAPTIC_MS = 12;
 
@@ -244,8 +243,11 @@ function springBackDrag(root: HTMLElement): void {
   const card = findFocusCard(root);
   if (card !== null) {
     springBack(card);
-    // Clear the progress custom property so the ::after bar resets.
-    card.style.removeProperty("--swipe-progress");
+  }
+  // Clear the progress custom property on the fixed bar so it resets.
+  const progressEl = document.getElementById("swipe-progress");
+  if (progressEl !== null) {
+    progressEl.style.removeProperty("--swipe-progress");
   }
 }
 
@@ -331,11 +333,14 @@ export function attachGestures(opts: AttachOptions): () => void {
     // Use translate3d for GPU compositing — eliminates jank on mobile.
     card.style.transform = `translate3d(0, ${clampedDy}px, 0)`;
     card.style.opacity = String(opacity);
-    // Swipe progress bar: set CSS custom property on the focus card.
-    // The ::after pseudo-element in motion.css reads this and renders
-    // a 2px bar at the bottom of the card.
+    // Swipe progress bar: set the CSS custom property on the fixed
+    // #swipe-progress element (lives in index.astro, anchored to the
+    // viewport bottom — independent of the focus card's position).
     const progress = Math.min(absDy / PROGRESS_DISTANCE, 1);
-    card.style.setProperty("--swipe-progress", String(progress));
+    const progressEl = document.getElementById("swipe-progress");
+    if (progressEl !== null) {
+      progressEl.style.setProperty("--swipe-progress", String(progress));
+    }
   };
 
   const scheduleDragFrame = (): void => {
@@ -352,6 +357,26 @@ export function attachGestures(opts: AttachOptions): () => void {
     // Calling releaseCapture() here is idempotent — safe even if nothing
     // is captured.
     releaseCapture();
+
+    // Detect zombie pointers left over from a gesture that was interrupted
+    // by a re-render. If the incoming pointerdown's ID is NOT in our
+    // pointers map, the entries that ARE in the map are stale (the
+    // browser no longer tracks them; the DOM elements that captured them
+    // have been replaced). Wipe them so the size-0 reset path runs.
+    if (!state.pointers.has(e.pointerId)) {
+      state.pointers.clear();
+      state.dragLocked = null;
+      state.dragging = false;
+      state.pinchStartDist = null;
+      state.pinchFired = false;
+      state.captured = null;
+      state.capturedPointerId = null;
+      state.pressingElement = null;
+      if (dragFrame !== null) {
+        cancelAnimationFrame(dragFrame);
+        dragFrame = null;
+      }
+    }
 
     // Reset state UNCONDITIONALLY on every first-pointerdown. This is the
     // fix for the "gestures stop working after closing the grid" bug —
@@ -615,12 +640,16 @@ export function attachGestures(opts: AttachOptions): () => void {
         if (didCommit) {
           // Leave the transform in place — the view-transition snapshots
           // the dragged rect as the "old" focus card. Clear opacity so
-          // the crossfade isn't dimmed. Clear the progress property.
+          // the crossfade isn't dimmed.
           card.style.opacity = "";
-          card.style.removeProperty("--swipe-progress");
         } else {
           springBackDrag(root);
         }
+      }
+      // Reset the fixed progress bar either way.
+      const progressEl = document.getElementById("swipe-progress");
+      if (progressEl !== null) {
+        progressEl.style.removeProperty("--swipe-progress");
       }
     }
 

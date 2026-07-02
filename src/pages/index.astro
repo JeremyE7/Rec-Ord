@@ -11,6 +11,12 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
   >
     <div id="app"></div>
   </main>
+
+  {/* Swipe-progress indicator. Fixed to the bottom of the viewport so
+   *  it stays put regardless of where the focus card is. The gesture
+   *  handler updates its `--swipe-progress` custom property during a
+   *  vertical drag. Pure visual; `aria-hidden` and `pointer-events: none`. */}
+  <div id="swipe-progress" class="swipe-progress" aria-hidden="true"></div>
 </BaseLayout>
 
 <script>
