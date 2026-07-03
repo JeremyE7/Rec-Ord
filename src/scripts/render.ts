@@ -20,7 +20,6 @@ import type { AppState, Entry, Record, View } from "./types";
 import {
   formatDelta,
   formatRelativeDate,
-  formatValue,
   formatValueForUnit,
   latestEntry,
   previousEntry,
@@ -257,19 +256,28 @@ export function renderSparkline(
   // newest-first, so reverse once.
   const ordered: Entry[] = [...entries].reverse();
   const n = ordered.length;
-  let min = ordered[0]!.value;
-  let max = ordered[0]!.value;
+  // `Infinity` / `-Infinity` seeds eliminate the need for a special-case
+  // `ordered[0]!` — any finite value replaces them on the first iteration.
+  let min = Infinity;
+  let max = -Infinity;
   for (const e of ordered) {
     if (e.value < min) min = e.value;
     if (e.value > max) max = e.value;
   }
   const range = max - min !== 0 ? max - min : 1;
 
+  // Build the polyline points while remembering the last one for the
+  // optional "latest dot" below. Iterating with `.entries()` (instead of
+  // `ordered[i]`) keeps us type-safe under `noUncheckedIndexedAccess`.
   const points: string[] = [];
-  for (let i = 0; i < n; i++) {
+  let lastX = 0;
+  let lastY = 0;
+  for (const [i, e] of ordered.entries()) {
     const x = (i / (n - 1)) * numericBase;
-    const y = 1 + (1 - (ordered[i]!.value - min) / range) * (height - 2);
+    const y = 1 + (1 - (e.value - min) / range) * (height - 2);
     points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+    lastX = x;
+    lastY = y;
   }
 
   const polyline = document.createElementNS(SVG_NS, "polyline");
@@ -283,8 +291,6 @@ export function renderSparkline(
   svg.append(polyline);
 
   if (showLatestDot) {
-    const lastX = numericBase;
-    const lastY = 1 + (1 - (ordered[n - 1]!.value - min) / range) * (height - 2);
     const circle = document.createElementNS(SVG_NS, "circle");
     circle.setAttribute("cx", String(lastX));
     circle.setAttribute("cy", lastY.toFixed(2));
@@ -651,9 +657,7 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
-  value.className =
-    "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
-    heroFontSize + " tabular-nums max-w-full min-w-0 break-words";
+  value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 break-words`;
   value.textContent = formatValueForUnit(latest.value, record.unit);
 
   // Unit: displayed BELOW the value as a secondary label.
@@ -1094,9 +1098,15 @@ function renderNewRecord(): HTMLElement {
   // to scroll when the keyboard pushes content up on mobile, and the
   // combo guarantees `overflow-y: auto` is active regardless of how
   // the parent flex container's height resolves.
+  // NOTE: `overflow` on the form only works if it has a constrained
+  // height. `flex-1 min-h-0` in a `h-full` flex parent gives it a
+  // determined height and allows shrinking; `scroll-region` enables
+  // native touch scrolling. `h-full` was REMOVED because it conflicts
+  // with `flex-1` (the two fight for control of the form's height),
+  // causing the form to overflow its parent instead of scrolling.
   form.className =
     "w-full max-w-2xl flex flex-col gap-6 text-left " +
-    "h-full overflow-y-auto flex-1 min-h-0 scroll-region";
+    "flex-1 min-h-0 scroll-region";
   form.dataset.newRecordForm = "true";
 
   // Name — big and prominent
@@ -1180,10 +1190,7 @@ function renderNewRecord(): HTMLElement {
     const stateClasses = opt.defaultActive
       ? "border-accent text-accent"
       : "border-line text-ink-muted hover:text-ink hover:border-ink-muted";
-    btn.className =
-      "font-body text-base tracking-[0.15em] uppercase " +
-      "px-4 py-3 border transition-colors cursor-pointer " +
-      stateClasses;
+    btn.className = `font-body text-base tracking-[0.15em] uppercase px-4 py-3 border transition-colors cursor-pointer ${stateClasses}`;
     directionRow.append(btn);
   }
 

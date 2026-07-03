@@ -485,8 +485,11 @@ export function attachGestures(opts: AttachOptions): () => void {
       state.pointers.set(e.pointerId, p);
       const points = Array.from(state.pointers.values());
       if (points.length === 2) {
-        state.pinchStartDist = distance(points[0]!, points[1]!);
-        state.pinchFired = false;
+        const [p0, p1] = points;
+        if (p0 !== undefined && p1 !== undefined) {
+          state.pinchStartDist = distance(p0, p1);
+          state.pinchFired = false;
+        }
       }
       return;
     }
@@ -561,7 +564,9 @@ export function attachGestures(opts: AttachOptions): () => void {
     // Pinch path: two pointers down, no long-press/tap competing.
     if (state.pointers.size === 2 && state.pinchStartDist !== null && !state.pinchFired) {
       const points = Array.from(state.pointers.values());
-      const d = distance(points[0]!, points[1]!);
+      const [p0, p1] = points;
+      if (p0 === undefined || p1 === undefined) return;
+      const d = distance(p0, p1);
       const ratio = d / state.pinchStartDist;
       const c = centroid(points);
       if (ratio >= PINCH_OUT) {
@@ -614,7 +619,7 @@ export function attachGestures(opts: AttachOptions): () => void {
           // Swipe up or horizontal: ignore the drag entirely.
           return;
         }
-      } else {
+      } else if (absDx > absDy) {
         // Direction-aware axis lock: only commit to "h" (horizontal)
         // if the swipe direction is valid for the current view.
         //   - Focus view: only swipe RIGHT (dx > 0) is valid — it opens
@@ -625,28 +630,26 @@ export function attachGestures(opts: AttachOptions): () => void {
         //   - New-record view: only swipe LEFT (dx < 0) is valid — it
         //     closes the form. Swipe RIGHT has no handler.
         //   - Grid view: no swipe gestures (pinch + cell-tap only).
-        if (absDx > absDy) {
-          // Horizontal-dominant swipe. Gate by direction + view.
-          const view = getView();
-          if (view === "focus" && dx > 0) {
-            state.dragLocked = "h";
-            state.dragging = true;
-          } else if (view === "new" && dx < 0) {
-            state.dragLocked = "h";
-            state.dragging = true;
-          }
-          // Otherwise: the direction is invalid for this view. Don't
-          // lock the axis — let the user keep swiping (they may change
-          // direction to a valid one, or just lift without committing).
-        } else {
-          // Vertical-dominant swipe. Always valid (swipe up = next
-          // record, swipe down = previous record or collapse).
-          state.dragLocked = "v";
-          // Set dragging=true at the moment the lock is acquired, not in
-          // applyDragFrame (which can run multiple times per frame and may
-          // run after the finger has already lifted).
+        // Horizontal-dominant swipe. Gate by direction + view.
+        const view = getView();
+        if (view === "focus" && dx > 0) {
+          state.dragLocked = "h";
+          state.dragging = true;
+        } else if (view === "new" && dx < 0) {
+          state.dragLocked = "h";
           state.dragging = true;
         }
+        // Otherwise: the direction is invalid for this view. Don't
+        // lock the axis — let the user keep swiping (they may change
+        // direction to a valid one, or just lift without committing).
+      } else {
+        // Vertical-dominant swipe. Always valid (swipe up = next
+        // record, swipe down = previous record or collapse).
+        state.dragLocked = "v";
+        // Set dragging=true at the moment the lock is acquired, not in
+        // applyDragFrame (which can run multiple times per frame and may
+        // run after the finger has already lifted).
+        state.dragging = true;
       }
     }
 

@@ -147,7 +147,9 @@ export function getSeedData(): PersistedState {
   const isoNow = now.toISOString();
   const daysAgo = (n: number): string => {
     const d = new Date(now.getTime() - n * DAY_MS);
-    return d.toISOString().split("T")[0];
+    // ISO-8601 always starts with "YYYY-MM-DD"; .slice is the type-safe
+    // equivalent of .split("T")[0] under `noUncheckedIndexedAccess`.
+    return d.toISOString().slice(0, 10);
   };
   const makeEntry = (value: number, daysBack: number): Entry => ({
     id: crypto.randomUUID(),
@@ -223,8 +225,16 @@ export function getSeedData(): PersistedState {
     },
   ];
 
+  // `records` is defined inline above with five entries, so the first
+  // element always exists at runtime. The `if` is for
+  // `noUncheckedIndexedAccess` (which otherwise widens `records[0]`
+  // to `Record | undefined`).
+  const first = records[0];
+  if (first === undefined) {
+    throw new Error("getSeedData: seed records array is empty");
+  }
   return {
     records,
-    currentRecordId: records[0].id,
+    currentRecordId: first.id,
   };
 }

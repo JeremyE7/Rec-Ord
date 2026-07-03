@@ -140,16 +140,12 @@ export function formatValueForUnit(n: number, unit: string): string {
   if (u === "MIN") return formatMinutes(n);
   if (u === "SEC") return formatSeconds(n);
 
-  // Weight — keep one decimal of precision (78.2 is meaningful; 78 is
-  // a different kettle of fish).
-  if (u === "KG" || u === "LBS") {
-    const rounded = Math.round(n * 10) / 10;
-    if (Number.isInteger(rounded)) return String(rounded);
-    return rounded.toFixed(1).replace(/\.0$/, "");
-  }
-
-  // Everything else (KM, MI, REPS, DAYS, STEPS, CAL, …): no decimals.
-  // "30.5 km" doesn't make sense; "30 km" does.
+  // Everything else (KG, LBS, KM, MI, REPS, DAYS, STEPS, HRS, …):
+  // NO DECIMALS. "78.2 kg" doesn't make sense — the user explicitly
+  // said "kilogramos tambien tiene decimales y deberia ser solo el
+  // entero". "7.5 hours" is meaningless; it should be "7h 30m" but
+  // HRS is already handled above. For every non-time unit, round to
+  // the nearest integer.
   return String(Math.round(n));
 }
 
@@ -355,14 +351,16 @@ export function isNewBest(
   }
   if (otherValues.length === 0) return false;
   if (record.direction === "up") {
-    let max = otherValues[0]!;
+    // -Infinity as the seed ensures any finite value replaces it on the
+    // first iteration, so we never need to special-case `otherValues[0]`.
+    let max = -Infinity;
     for (const v of otherValues) {
       if (v > max) max = v;
     }
     return newValue > max;
   }
   // direction === "down"
-  let min = otherValues[0]!;
+  let min = Infinity;
   for (const v of otherValues) {
     if (v < min) min = v;
   }

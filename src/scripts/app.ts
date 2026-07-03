@@ -106,8 +106,9 @@ function updateDOM(): void {
   // or the delete-confirm label flip.
   const state = getState();
   const record = state.records.find((r) => r.id === state.currentRecordId);
-  if (record !== undefined && record.entries.length > 0) {
-    const latestValue = record.entries[0]!.value;
+  const latest = record === undefined ? null : latestEntry(record);
+  if (latest !== null) {
+    const latestValue = latest.value;
     const recordChanged = lastRenderedRecordId !== state.currentRecordId;
     const valueChanged = lastRenderedHeroValue !== latestValue;
     const isFirstRender = lastRenderedRecordId === undefined;
