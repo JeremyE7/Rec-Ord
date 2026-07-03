@@ -340,13 +340,14 @@ function renderFocus(state: AppState): HTMLElement {
   // long-press / collapse and morphs the height/content. The section is
   // `position: relative` so the ::after pseudo-element (swipe progress
   // bar, styled in motion.css) can anchor to its bottom edge.
-  // `h-full` lets the inner `justify-end` push the card content to the
-  // bottom of the screen (Apple Music "now playing" feel). Without it,
-  // the section collapses to its content height and `justify-end` is a
-  // no-op.
+  // `h-full` lets the inner `flex-1 justify-end` push the card content
+  // to the bottom of the screen (Apple Music "now playing" feel).
+  // Without `h-full` on the section + `flex-1` on the inner, the
+  // section collapses to its content height and `justify-end` is a no-op
+  // (content shows at the top instead of the bottom).
   const section = document.createElement("section");
   section.className =
-    "relative w-full max-w-7xl h-full flex flex-col items-start gap-10 px-4 sm:px-8";
+    "relative w-full max-w-7xl h-full flex flex-col items-start gap-6 px-4 sm:px-8";
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
@@ -383,36 +384,47 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
   // expanded one on collapse, producing a confusing layout morph.
   const inner = document.createElement("div");
   if (expanded) {
-    inner.className = "flex flex-col items-center justify-start gap-8 w-full pt-4";
+    inner.className = "flex flex-col items-center justify-start gap-8 w-full flex-1 pt-4";
   } else {
-    inner.className = "flex flex-col items-start justify-end gap-8 w-full pb-4";
+    // `flex-1` is the critical piece: without it, the inner collapses
+    // to its content height and `justify-end` (bottom) has no space
+    // to push into, so the content shows at the top instead of the
+    // bottom. With `flex-1` the inner fills the section's height and
+    // `justify-end` pushes the content to the bottom edge.
+    inner.className = "flex flex-col items-start justify-end gap-6 w-full flex-1 pb-4";
     inner.style.viewTransitionName = "card-head";
   }
 
   // Context label
   inner.append(renderContextLabel(record));
 
-  // Hero (value + unit + optional direction indicator)
-  inner.append(renderHero(record, latest));
+  // Hero + sparkline row (collapsed only). In collapsed mode the hero
+  // and a small sparkline sit side by side: hero on the left (natural
+  // width), sparkline on the right (small, subtle). The user asked:
+  // "el grafico deberia ser mas pequeño y estar al lado de donde se
+  // colocan los dias". In edit mode the hero is centered (no row)
+  // and the sparkline is omitted entirely (the history list below
+  // provides the per-entry detail).
+  if (expanded) {
+    inner.append(renderHero(record, latest));
+  } else {
+    const heroRow = document.createElement("div");
+    heroRow.className = "flex items-end justify-start gap-4 w-full";
+    heroRow.append(renderHero(record, latest));
+    const sparkline = renderSparkline(record.entries, {
+      width: 72,
+      height: 22,
+      showLatestDot: false,
+      className: "text-accent opacity-60 shrink-0 mb-2",
+    });
+    heroRow.append(sparkline);
+    inner.append(heroRow);
+  }
 
   // Stats row (PREVIOUS + CHANGE) — only when there is a baseline entry.
   const prev = previousEntry(record);
   if (prev !== null) {
     inner.append(renderStats(record, latest, prev));
-  }
-
-  // Trend sparkline — only in collapsed mode. In edit (expanded) mode,
-  // the full history list below provides the trend detail at a per-entry
-  // level, so the sparkline would be redundant. The user explicitly
-  // asked: "el grafico deberia desaparecer cuando entras al editar".
-  if (!expanded) {
-    const sparkline = renderSparkline(record.entries, {
-      width: 200,
-      height: 36,
-      showLatestDot: true,
-      className: "text-accent mx-auto mt-2",
-    });
-    inner.append(sparkline);
   }
 
   return inner;
@@ -448,8 +460,12 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // clips any overshoot cleanly (no horizontal scrollbar, no layout
   // breakage on the flex parent).
   const heroWrap = document.createElement("div");
+  // `w-full` removed: in the collapsed focus row the hero is in a flex
+  // row next to the sparkline, so it needs its natural width (not full
+  // width). `shrink-0` prevents it from being crushed by the flex
+  // parent. `max-w-full overflow-hidden` is the overflow guard.
   heroWrap.className =
-    "relative flex flex-col items-start text-left w-full max-w-full overflow-hidden";
+    "relative flex flex-col items-start text-left shrink-0 max-w-full overflow-hidden";
   heroWrap.style.viewTransitionName = VT_HERO;
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
