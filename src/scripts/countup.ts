@@ -36,6 +36,15 @@ import { formatValueForUnit, prefersReducedMotion } from "./motion";
  * every frame, so time units ("7.5" → "7h 30m") animate smoothly
  * alongside integer-only units.
  *
+ * AESTHETIC FIX — text-wrap flicker prevention:
+ * During the animation the formatted value changes length ("6m" →
+ * "1h 30m"), and with `break-words` + `justify-end` the hero element
+ * wraps at different positions, causing a visible "jump" up/down in
+ * the layout. We pin the element to `white-space: nowrap` and
+ * `overflow: hidden` for the duration of the animation, which keeps
+ * the value on one stable line. After the animation completes we
+ * restore the original `break-words` class.
+ *
  * @param element - The `<h1>` element displaying the hero value.
  * @param targetValue - The numeric value to animate toward.
  * @param unit - The record's unit string, used for unit-aware
@@ -52,6 +61,12 @@ export async function animateHero(
     element.textContent = formatValueForUnit(targetValue, unit);
     return;
   }
+
+  // Pin the element to a single, stable line during the animation so
+  // the changing text length doesn't cause wrapping flicker.
+  element.classList.remove("break-words");
+  element.style.whiteSpace = "nowrap";
+  element.style.overflow = "hidden";
 
   try {
     // Always start from 0 — the scoreboard effect. The caller is
@@ -84,5 +99,12 @@ export async function animateHero(
     // Graceful degradation: the element already has the correct value
     // set by render.ts, so nothing to do.
     element.textContent = formatValueForUnit(targetValue, unit);
+  } finally {
+    // Restore the wrap behaviour that was temporarily disabled during
+    // the animation. This lets the hero wrap naturally if the value
+    // is too wide when the animation is not running.
+    element.style.whiteSpace = "";
+    element.style.overflow = "";
+    element.classList.add("break-words");
   }
 }
