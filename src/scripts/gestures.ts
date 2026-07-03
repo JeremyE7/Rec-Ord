@@ -60,8 +60,17 @@ import { prefersReducedMotion } from "./motion";
 
 const SWIPE_DISTANCE = 48; // px — commit threshold (was 60; a bit easier to commit)
 const SWIPE_VELOCITY = 0.35; // px/ms
-const PROGRESS_DISTANCE = 80; // px — progress bar fills over this distance
-const LONG_PRESS_MS = 500;
+// Progress bar fill distance. Set equal to (or just below) the commit
+// threshold so the bar reaches ~100% at the moment of commit. Was 80,
+// but with a 48px commit threshold the bar was only at ~60% when the
+// user committed — the visual feedback felt disconnected from the
+// action. 50 makes the bar fill as the user approaches the commit
+// point, giving a "you're almost there" feel that resolves at commit.
+const PROGRESS_DISTANCE = 50;
+// Long-press duration. Was 500ms; the user said it felt sluggish.
+// 420ms is still long enough to clearly distinguish from a tap (a tap
+// is < 250ms) but short enough that the expand feels responsive.
+const LONG_PRESS_MS = 420;
 const PRESS_SIGNAL_MS = 200;
 const LONG_PRESS_MOVE = 14; // px of movement allowed before long-press cancels
 const PINCH_OUT = 1.25;
@@ -606,11 +615,38 @@ export function attachGestures(opts: AttachOptions): () => void {
           return;
         }
       } else {
-        state.dragLocked = absDx > absDy ? "h" : "v";
-        // Set dragging=true at the moment the lock is acquired, not in
-        // applyDragFrame (which can run multiple times per frame and may
-        // run after the finger has already lifted).
-        state.dragging = true;
+        // Direction-aware axis lock: only commit to "h" (horizontal)
+        // if the swipe direction is valid for the current view.
+        //   - Focus view: only swipe RIGHT (dx > 0) is valid — it opens
+        //     the new-record form. Swipe LEFT has no handler, so locking
+        //     the axis would create a "dead gesture" (the user feels
+        //     something happened but nothing commits). Skipping the lock
+        //     lets the user keep moving their finger freely.
+        //   - New-record view: only swipe LEFT (dx < 0) is valid — it
+        //     closes the form. Swipe RIGHT has no handler.
+        //   - Grid view: no swipe gestures (pinch + cell-tap only).
+        if (absDx > absDy) {
+          // Horizontal-dominant swipe. Gate by direction + view.
+          const view = getView();
+          if (view === "focus" && dx > 0) {
+            state.dragLocked = "h";
+            state.dragging = true;
+          } else if (view === "new" && dx < 0) {
+            state.dragLocked = "h";
+            state.dragging = true;
+          }
+          // Otherwise: the direction is invalid for this view. Don't
+          // lock the axis — let the user keep swiping (they may change
+          // direction to a valid one, or just lift without committing).
+        } else {
+          // Vertical-dominant swipe. Always valid (swipe up = next
+          // record, swipe down = previous record or collapse).
+          state.dragLocked = "v";
+          // Set dragging=true at the moment the lock is acquired, not in
+          // applyDragFrame (which can run multiple times per frame and may
+          // run after the finger has already lifted).
+          state.dragging = true;
+        }
       }
     }
 

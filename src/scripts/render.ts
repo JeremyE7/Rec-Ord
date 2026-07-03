@@ -340,25 +340,54 @@ function renderFocus(state: AppState): HTMLElement {
   // long-press / collapse and morphs the height/content. The section is
   // `position: relative` so the ::after pseudo-element (swipe progress
   // bar, styled in motion.css) can anchor to its bottom edge.
+  // `h-full` lets the inner `justify-end` push the card content to the
+  // bottom of the screen (Apple Music "now playing" feel). Without it,
+  // the section collapses to its content height and `justify-end` is a
+  // no-op.
   const section = document.createElement("section");
   section.className =
-    "relative w-full max-w-7xl flex flex-col items-start gap-10 px-4 sm:px-8";
+    "relative w-full max-w-7xl h-full flex flex-col items-start gap-10 px-4 sm:px-8";
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
   // Current card content (context label + hero + stats, when applicable).
-  section.append(renderFocusInner(record, latest));
+  section.append(renderFocusInner(record, latest, false));
 
   return section;
 }
 
-function renderFocusInner(record: Record, latest: Entry): HTMLElement {
+function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTMLElement {
   // Full card content: context + sparkline + hero + stats. The wrapper
   // section (collapsed focus and expanded focus) adds `data-focus-card`
   // and the shared `view-transition-name: record-card`, so the browser
   // pairs the two on long-press / collapse and morphs the height/content.
+  //
+  // Layout depends on `expanded`:
+  //   - Collapsed: bottom-left aligned (`items-start justify-end pb-4`).
+  //     The inner fills the section's height (the section is `h-full`),
+  //     and `justify-end` pushes the content to the bottom of the
+  //     screen — the "Apple Music now playing" feel.
+  //   - Expanded: top-center aligned (`items-center justify-start pt-4`).
+  //     The content centers horizontally and sits at the top of the
+  //     screen, with the history + form below it (also centered).
+  //
+  // View-transition-name: we tag the inner with `card-head` ONLY when
+  // collapsed. On expand, the old (collapsed, named) element fades out
+  // and the new (expanded, unnamed) element appears — the outer section
+  // `record-card` morph handles the overall height/position change, and
+  // the card-head fade provides a clean visual transition for the card
+  // content itself. On collapse, the new (collapsed, named) element
+  // fades in, paired with the outer section's record-card morph. We
+  // intentionally DON'T keep the name on the expanded inner: if we did,
+  // the browser would try to pair a collapsed card-head with an
+  // expanded one on collapse, producing a confusing layout morph.
   const inner = document.createElement("div");
-  inner.className = "flex flex-col items-start text-left gap-10 w-full";
+  if (expanded) {
+    inner.className = "flex flex-col items-center justify-start gap-8 w-full pt-4";
+  } else {
+    inner.className = "flex flex-col items-start justify-end gap-8 w-full pb-4";
+    inner.style.viewTransitionName = "card-head";
+  }
 
   // Context label
   inner.append(renderContextLabel(record));
@@ -372,16 +401,19 @@ function renderFocusInner(record: Record, latest: Entry): HTMLElement {
     inner.append(renderStats(record, latest, prev));
   }
 
-  // Trend sparkline — a quick visual scan of the series. Sits BELOW
-  // the stats (not above the hero) so the focus flows: what (context)
-  // → value (hero) → comparison (stats) → trend (sparkline).
-  const sparkline = renderSparkline(record.entries, {
-    width: 200,
-    height: 36,
-    showLatestDot: true,
-    className: "text-accent mx-auto mt-2",
-  });
-  inner.append(sparkline);
+  // Trend sparkline — only in collapsed mode. In edit (expanded) mode,
+  // the full history list below provides the trend detail at a per-entry
+  // level, so the sparkline would be redundant. The user explicitly
+  // asked: "el grafico deberia desaparecer cuando entras al editar".
+  if (!expanded) {
+    const sparkline = renderSparkline(record.entries, {
+      width: 200,
+      height: 36,
+      showLatestDot: true,
+      className: "text-accent mx-auto mt-2",
+    });
+    inner.append(sparkline);
+  }
 
   return inner;
 }
@@ -407,8 +439,17 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // Hero: the DOMINANT visual element. The value is huge, left-aligned,
   // and the first thing the eye sees. The unit sits below as a secondary
   // label. The direction indicator (if any) is a small badge.
+  //
+  // Overflow guard: `max-w-full overflow-hidden` on the wrapper is a
+  // safety net for very long values (e.g. "999999"). The `clamp()` on
+  // the h1 font-size already constrains the value visually, but if the
+  // viewport is unusually narrow OR the value is unusually wide, the
+  // h1 could overflow the container. The wrapper's `overflow-hidden`
+  // clips any overshoot cleanly (no horizontal scrollbar, no layout
+  // breakage on the flex parent).
   const heroWrap = document.createElement("div");
-  heroWrap.className = "relative flex flex-col items-start text-left w-full";
+  heroWrap.className =
+    "relative flex flex-col items-start text-left w-full max-w-full overflow-hidden";
   heroWrap.style.viewTransitionName = VT_HERO;
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
@@ -428,12 +469,20 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // "nuevo récord" glow pulse — when an entry breaks the record's best,
   // app.ts adds a temporary `pr-pulse` class to this element to flash
   // a text-shadow. Without a breaking entry the element renders plain.
+  //
+  // Overflow guard on the h1 itself: `max-w-full` caps the h1 to the
+  // wrapper's width, `overflow-hidden` clips any text that still
+  // doesn't fit, and `text-clip` (text-overflow: clip, NOT ellipsis)
+  // means the cut is clean — no "..." showing for a number. The
+  // `clamp(12rem, 52vw, 28rem)` font-size is the primary guard; these
+  // classes are the safety net for the rare case where it's not enough
+  // (e.g. a 6-digit number on a very narrow screen).
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
   value.className =
     "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
-    "text-[clamp(12rem,52vw,28rem)] tabular-nums";
+    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full overflow-hidden text-clip";
   value.textContent = formatValue(latest.value);
 
   // Unit: displayed BELOW the value as a secondary label.
@@ -509,21 +558,41 @@ function renderFocusExpandedSection(
   section.dataset.focusCard = "true";
   section.style.viewTransitionName = VT_RECORD_CARD;
 
-  section.append(renderFocusInner(record, latest));
+  section.append(renderFocusInner(record, latest, true));
 
   // --- Expanded content (entries history + add-entry form + delete) -----
+  //
+  // This wrapper is the scrollable region for the expanded view. The
+  // history can be long (dozens of entries), so it needs to scroll
+  // independently of the card content above it.
+  //
+  // Key classes for the scroll fix:
+  //   - `flex-1`        — fill the remaining vertical space in the section
+  //                       (the section is `h-full max-h-[100dvh]`)
+  //   - `min-h-0`       — CRITICAL: without this, flex children don't
+  //                       shrink below their content size, and the
+  //                       `overflow-y-auto` never triggers. The history
+  //                       would push the section past the viewport.
+  //   - `overflow-y-auto` — enables vertical scrolling when content
+  //                       exceeds the wrapper's height
+  //   - `max-w-md`      — keeps the history list readable (a 28rem
+  //                       column is the max comfortable reading width)
+  //   - `items-center`  — centers the history rows + form within the
+  //                       column (matches the centered card content
+  //                       above)
   const expandedWrap = document.createElement("div");
   expandedWrap.className =
-    "w-full flex flex-col items-start gap-4 pt-6 flex-1 min-h-0 w-full";
+    "min-h-0 overflow-y-auto w-full max-w-md flex flex-col items-center gap-6 pt-8 flex-1";
 
   // Entries history (newest first; the latest is index 0 and is the
   // hero, so we show entries[1..] in the history. The latest is hidden
-  // because it IS the hero.) The list is a `scroll-region` so it
-  // scrolls on its own without affecting the rest of the page.
+  // because it IS the hero.) The list itself doesn't scroll — the
+  // parent `expandedWrap` is the scroll region (it has
+  // `overflow-y-auto min-h-0 flex-1`), so the whole expanded content
+  // (history + add-entry form + delete) scrolls together as one
+  // continuous region.
   const list = document.createElement("ul");
-  list.className =
-    "w-full max-w-md flex flex-col gap-1 scroll-region " +
-    "max-h-[40vh]";
+  list.className = "w-full max-w-md flex flex-col gap-1";
 
   const history = record.entries.slice(1);
   for (const entry of history) {
@@ -834,10 +903,14 @@ function renderNewRecord(): HTMLElement {
   const form = document.createElement("form");
   // The form is the scroll region. `flex-1 min-h-0` lets it fill the
   // remaining vertical space and `scroll-region` enables native touch
-  // scrolling on it.
+  // scrolling on it. `h-full` + `overflow-y-auto` are added
+  // explicitly as a belt-and-suspenders scroll fix — the form needs
+  // to scroll when the keyboard pushes content up on mobile, and the
+  // combo guarantees `overflow-y: auto` is active regardless of how
+  // the parent flex container's height resolves.
   form.className =
     "w-full max-w-2xl flex flex-col gap-6 text-left " +
-    "flex-1 min-h-0 scroll-region";
+    "h-full overflow-y-auto flex-1 min-h-0 scroll-region";
   form.dataset.newRecordForm = "true";
 
   // Name — big and prominent
