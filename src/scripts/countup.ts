@@ -68,6 +68,14 @@ export async function animateHero(
   element.style.whiteSpace = "nowrap";
   element.style.overflow = "hidden";
 
+  // Helper to restore the wrap behaviour that was temporarily disabled
+  // during the animation. Called once the animation fully completes.
+  const restoreWrap = (): void => {
+    element.style.whiteSpace = "";
+    element.style.overflow = "";
+    element.classList.add("break-words");
+  };
+
   try {
     // Always start from 0 — the scoreboard effect. The caller is
     // responsible for setting element.textContent to "0" before calling
@@ -89,7 +97,10 @@ export async function animateHero(
       formattingFn: (val: number) => formatValueForUnit(val, unit),
     });
 
-    counter.start();
+    // await the animation so restoreWrap runs AFTER it completes, not
+    // at the end of the synchronous try block. The caller passes
+    // `void animateHero(...)` so this doesn't block updateDOM.
+    await counter.start();
 
     // If CountUp reported an error, fall back to direct text.
     if (counter.error) {
@@ -100,11 +111,6 @@ export async function animateHero(
     // set by render.ts, so nothing to do.
     element.textContent = formatValueForUnit(targetValue, unit);
   } finally {
-    // Restore the wrap behaviour that was temporarily disabled during
-    // the animation. This lets the hero wrap naturally if the value
-    // is too wide when the animation is not running.
-    element.style.whiteSpace = "";
-    element.style.overflow = "";
-    element.classList.add("break-words");
+    restoreWrap();
   }
 }
