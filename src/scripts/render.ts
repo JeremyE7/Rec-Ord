@@ -363,18 +363,6 @@ function renderFocusInner(record: Record, latest: Entry): HTMLElement {
   // Context label
   inner.append(renderContextLabel(record));
 
-  // Trend sparkline — a quick visual scan of the series before the user
-  // reads the big number. Sits between the context label and the hero
-  // (the same spot in collapsed and expanded focus, since both go
-  // through `renderFocusInner`).
-  const sparkline = renderSparkline(record.entries, {
-    width: 160,
-    height: 32,
-    showLatestDot: true,
-    className: "text-accent mx-auto",
-  });
-  inner.append(sparkline);
-
   // Hero (value + unit + optional direction indicator)
   inner.append(renderHero(record, latest));
 
@@ -383,6 +371,17 @@ function renderFocusInner(record: Record, latest: Entry): HTMLElement {
   if (prev !== null) {
     inner.append(renderStats(record, latest, prev));
   }
+
+  // Trend sparkline — a quick visual scan of the series. Sits BELOW
+  // the stats (not above the hero) so the focus flows: what (context)
+  // → value (hero) → comparison (stats) → trend (sparkline).
+  const sparkline = renderSparkline(record.entries, {
+    width: 200,
+    height: 36,
+    showLatestDot: true,
+    className: "text-accent mx-auto mt-2",
+  });
+  inner.append(sparkline);
 
   return inner;
 }

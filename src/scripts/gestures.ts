@@ -58,17 +58,17 @@ import { prefersReducedMotion } from "./motion";
  * Constants
  * ------------------------------------------------------------------------- */
 
-const SWIPE_DISTANCE = 60; // px — commit threshold
-const SWIPE_VELOCITY = 0.4; // px/ms
+const SWIPE_DISTANCE = 48; // px — commit threshold (was 60; a bit easier to commit)
+const SWIPE_VELOCITY = 0.35; // px/ms
 const PROGRESS_DISTANCE = 80; // px — progress bar fills over this distance
 const LONG_PRESS_MS = 500;
 const PRESS_SIGNAL_MS = 200;
 const LONG_PRESS_MOVE = 14; // px of movement allowed before long-press cancels
 const PINCH_OUT = 1.25;
 const PINCH_IN = 0.75;
-const AXIS_LOCK_THRESHOLD = 12; // px
-const DRAG_OPACITY_DIVISOR = 400; // |dy|/400, capped at 0.4
-const DRAG_OPACITY_MAX = 0.4;
+const AXIS_LOCK_THRESHOLD = 6; // px — dead zone before the card starts moving (was 12; half = snappier feel)
+const DRAG_OPACITY_DIVISOR = 500; // |dy|/500, capped at 0.25
+const DRAG_OPACITY_MAX = 0.25; // less aggressive opacity reduction during drag (was 0.4)
 const MAX_DRAG_DY = 500; // px — cap lastDy to prevent over-fling
 const ZOMBIE_THRESHOLD_MS = 1500; // pointers older than this are zombies
 const SPRING_LERP = 0.30; // spring stiffness (one subtle overshoot)
