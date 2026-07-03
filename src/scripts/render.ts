@@ -21,6 +21,7 @@ import {
   formatDelta,
   formatRelativeDate,
   formatValue,
+  formatValueForUnit,
   latestEntry,
   previousEntry,
   todayISO,
