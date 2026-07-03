@@ -66,7 +66,7 @@ const SWIPE_VELOCITY = 0.35; // px/ms
 // user committed — the visual feedback felt disconnected from the
 // action. 50 makes the bar fill as the user approaches the commit
 // point, giving a "you're almost there" feel that resolves at commit.
-const PROGRESS_DISTANCE = 50;
+const PROGRESS_DISTANCE = 32; // px — progress bar fills fast, reaches 100% at ~67% of the 48px commit threshold
 // Long-press duration. Was 500ms; the user said it felt sluggish.
 // 420ms is still long enough to clearly distinguish from a tap (a tap
 // is < 250ms) but short enough that the expand feels responsive.

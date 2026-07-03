@@ -93,6 +93,11 @@ export function commit(update: () => void, transitionName: string): void {
  */
 export function formatValue(n: number): string {
   if (!Number.isFinite(n)) return String(n);
+  // 3+ digit values (>= 100 or <= -100): round to integer, no decimals.
+  // A value like 225.7 becomes "226" — large enough that the decimal
+  // isn't meaningful. 1–2 digit values keep their decimals (78.2
+  // stays "78.2").
+  if (Math.abs(n) >= 100) return String(Math.round(n));
   // Round to 1 decimal to drop floating-point dust, then strip trailing zeros.
   const rounded = Math.round(n * 10) / 10;
   if (Number.isInteger(rounded)) return String(rounded);

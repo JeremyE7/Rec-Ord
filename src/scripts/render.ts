@@ -187,11 +187,23 @@ export function renderApp(state: AppState): HTMLElement {
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 export interface SparklineOptions {
-  width: number;
+  // The rendered width: either a fixed pixel value (number) or a CSS
+  // length (string, e.g. "100%"). When a string is passed, the SVG
+  // is sized by CSS at render time and the internal viewBox uses
+  // 320 as a numeric base for the coordinate system. The grid still
+  // uses pixel widths; the collapsed focus top area uses "100%".
+  width: number | string;
   height: number;
   showLatestDot?: boolean;
   className?: string;
 }
+
+// Numeric viewBox base used when the caller passes a string width
+// (e.g. "100%"). Picked to match the typical horizontal width of the
+// collapsed focus top area on a phone in portrait — large enough that
+// the polyline looks like a real chart, small enough that the
+// coordinates don't accumulate floating-point dust.
+const SPARKLINE_STRING_WIDTH_BASE = 320;
 
 export function renderSparkline(
   entries: ReadonlyArray<Entry>,
@@ -202,8 +214,16 @@ export function renderSparkline(
   const showLatestDot = options.showLatestDot === true;
   const className = options.className ?? "";
 
+  // The viewBox coordinate system needs a numeric base width so the
+  // polyline points can be computed. When the caller passes a string
+  // (e.g. "100%"), the actual rendered size is determined by CSS and
+  // the SVG scales to fit — the viewBox base is just an internal
+  // coordinate system.
+  const numericBase: number =
+    typeof width === "number" ? width : SPARKLINE_STRING_WIDTH_BASE;
+
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("viewBox", `0 0 ${numericBase} ${height}`);
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   // `block` so `mx-auto` (focus view) actually centers the SVG; SVG
@@ -222,7 +242,7 @@ export function renderSparkline(
     const yMid = String(height / 2);
     line.setAttribute("x1", "0");
     line.setAttribute("y1", yMid);
-    line.setAttribute("x2", String(width * 0.5));
+    line.setAttribute("x2", String(numericBase * 0.5));
     line.setAttribute("y2", yMid);
     line.setAttribute("stroke", "var(--color-accent)");
     line.setAttribute("stroke-width", "1.5");
@@ -246,7 +266,7 @@ export function renderSparkline(
 
   const points: string[] = [];
   for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * width;
+    const x = (i / (n - 1)) * numericBase;
     const y = 1 + (1 - (ordered[i]!.value - min) / range) * (height - 2);
     points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
   }
@@ -262,7 +282,7 @@ export function renderSparkline(
   svg.append(polyline);
 
   if (showLatestDot) {
-    const lastX = width;
+    const lastX = numericBase;
     const lastY = 1 + (1 - (ordered[n - 1]!.value - min) / range) * (height - 2);
     const circle = document.createElementNS(SVG_NS, "circle");
     circle.setAttribute("cx", String(lastX));
@@ -364,13 +384,17 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
   // pairs the two on long-press / collapse and morphs the height/content.
   //
   // Layout depends on `expanded`:
-  //   - Collapsed: bottom-left aligned (`items-start justify-end pb-4`).
-  //     The inner fills the section's height (the section is `h-full`),
-  //     and `justify-end` pushes the content to the bottom of the
-  //     screen — the "Apple Music now playing" feel.
+  //   - Collapsed: a top area (context + trend + sparkline) at the top
+  //     of the screen and a bottom area (hero + stats) at the bottom.
+  //     The inner is `flex flex-col h-full w-full flex-1` and a flex-1
+  //     spacer between the two areas pushes the bottom area to the
+  //     bottom edge — the "Apple Music now playing" feel, but with the
+  //     empty top margin now occupied by dashboard-style metrics.
   //   - Expanded: top-center aligned (`items-center justify-start pt-4`).
   //     The content centers horizontally and sits at the top of the
-  //     screen, with the history + form below it (also centered).
+  //     screen, with the history + form below it (also centered). No
+  //     sparkline, no trend indicator — the per-entry history list
+  //     below provides the detail.
   //
   // View-transition-name: we tag the inner with `card-head` ONLY when
   // collapsed. On expand, the old (collapsed, named) element fades out
@@ -382,49 +406,89 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
   // intentionally DON'T keep the name on the expanded inner: if we did,
   // the browser would try to pair a collapsed card-head with an
   // expanded one on collapse, producing a confusing layout morph.
+  //
+  // The new sparkline + trend indicator only exist in the collapsed
+  // view. The browser handles their entrance/exit via the unnamed-
+  // element crossfade (the default `expand`/`collapse` animation in
+  // motion.css): when going to expanded, they fade out; when coming
+  // back to collapsed, they fade in.
   const inner = document.createElement("div");
   if (expanded) {
-    inner.className = "flex flex-col items-center justify-start gap-8 w-full flex-1 pt-4";
+    inner.className =
+      "flex flex-col items-center justify-start gap-8 w-full flex-1 pt-4";
   } else {
-    // `flex-1` is the critical piece: without it, the inner collapses
-    // to its content height and `justify-end` (bottom) has no space
-    // to push into, so the content shows at the top instead of the
-    // bottom. With `flex-1` the inner fills the section's height and
-    // `justify-end` pushes the content to the bottom edge.
-    inner.className = "flex flex-col items-start justify-end gap-6 w-full flex-1 pb-4";
+    // The inner fills the section's height (the section is `h-full`
+    // and inner is the only child with `flex-1` in a flex column).
+    // Children: top area (context + trend + sparkline), flex-1 spacer,
+    // bottom area (hero + stats). The spacer takes the leftover
+    // vertical space and pushes the bottom area to the bottom edge.
+    // (`justify-end` is not used here — the spacer is the mechanism,
+    // and it cooperates with the `gap-8` to keep the top and bottom
+    // areas at least 32px apart.)
+    inner.className = "flex flex-col h-full w-full gap-8 flex-1";
     inner.style.viewTransitionName = "card-head";
   }
 
-  // Context label
-  inner.append(renderContextLabel(record));
-
-  // Hero + sparkline row (collapsed only). In collapsed mode the hero
-  // and a small sparkline sit side by side: hero on the left (natural
-  // width), sparkline on the right (small, subtle). The user asked:
-  // "el grafico deberia ser mas pequeño y estar al lado de donde se
-  // colocan los dias". In edit mode the hero is centered (no row)
-  // and the sparkline is omitted entirely (the history list below
-  // provides the per-entry detail).
   if (expanded) {
+    // Edit / expanded view: hero at the top-center, stats below the
+    // hero (only when there is a baseline entry — the expanded
+    // history list already provides the per-entry detail). No
+    // trend indicator and no sparkline here.
     inner.append(renderHero(record, latest));
+    const prev = previousEntry(record);
+    if (prev !== null) inner.append(renderStats(record, latest, prev));
   } else {
-    const heroRow = document.createElement("div");
-    heroRow.className = "flex items-end justify-start gap-4 w-full";
-    heroRow.append(renderHero(record, latest));
-    const sparkline = renderSparkline(record.entries, {
-      width: 72,
-      height: 22,
-      showLatestDot: false,
-      className: "text-accent opacity-60 shrink-0 mb-2",
-    });
-    heroRow.append(sparkline);
-    inner.append(heroRow);
-  }
+    // === Top area: context + trend indicator + sparkline ==========
+    // Uses the top margin space that was empty in the previous
+    // bottom-aligned layout. The sparkline is now LARGER and
+    // full-width, and the trend indicator (↑/❚❚/—) sits to the
+    // right of the context label.
+    const prev = previousEntry(record);
 
-  // Stats row (PREVIOUS + CHANGE) — only when there is a baseline entry.
-  const prev = previousEntry(record);
-  if (prev !== null) {
-    inner.append(renderStats(record, latest, prev));
+    const top = document.createElement("div");
+    top.className = "flex flex-col gap-4 w-full";
+
+    // Row 1: context label (left) + trend indicator (right),
+    // justified across the full width.
+    const headerRow = document.createElement("div");
+    headerRow.className = "flex items-center justify-between w-full gap-4";
+    headerRow.append(renderContextLabel(record));
+    headerRow.append(renderTrendIndicator(record, latest, prev));
+    top.append(headerRow);
+
+    // Row 2: the sparkline — LARGER (56px tall, vs 22px before),
+    // full-width (responsive via `width: "100%"` and `w-full`), at
+    // 50% opacity so it sits beneath the metric values visually.
+    const sparkline = renderSparkline(record.entries, {
+      width: "100%",
+      height: 56,
+      showLatestDot: true,
+      className: "text-accent opacity-50 w-full",
+    });
+    top.append(sparkline);
+
+    inner.append(top);
+
+    // Flex-1 spacer. Lives in `inner` (between `top` and `bottom`),
+    // not inside `top`: a `flex-1` child only grows inside a flex
+    // container with a determined main-axis size, and `top` is
+    // auto-sized (its own height = sum of its children's natural
+    // sizes). Putting the spacer here lets it consume the leftover
+    // vertical space and push the bottom area to the bottom edge.
+    const spacer = document.createElement("div");
+    spacer.className = "flex-1";
+    inner.append(spacer);
+
+    // === Bottom area: hero + stats ================================
+    // Same bottom-left alignment as before; the stats are now
+    // ALWAYS visible (with "—" values when there is no previous
+    // entry), so the stats block matches the visual weight of the
+    // top area's metrics.
+    const bottom = document.createElement("div");
+    bottom.className = "flex flex-col items-start gap-6 w-full";
+    bottom.append(renderHero(record, latest));
+    bottom.append(renderStats(record, latest, prev));
+    inner.append(bottom);
   }
 
   return inner;
@@ -447,6 +511,70 @@ function renderContextLabel(record: Record): HTMLElement {
   return context;
 }
 
+/**
+ * Small status indicator for the top-right of the collapsed focus
+ * header — shows whether the latest entry is progress, a pause/
+ * regression, or no change vs the previous entry.
+ *
+ * Three visual states (small uppercase label, aria-hidden because the
+ * delta is also visible in the stats block and the per-entry history
+ * list):
+ *   - "—" (em-dash) in muted ink at 50% opacity, when there's no
+ *     previous entry (this is the first entry) OR the value is
+ *     unchanged.
+ *   - "↑" in the accent color, when the delta is in the record's
+ *     "good" direction per `record.direction`:
+ *       direction "up"   + delta > 0 → progress
+ *       direction "down" + delta < 0 → progress (less is better)
+ *       direction null   + delta > 0 → progress (default: up is good)
+ *   - "❚❚" (pause bars) in muted ink, when the delta is in the
+ *     "bad" direction (or for null direction + delta < 0).
+ */
+function renderTrendIndicator(
+  record: Record,
+  latest: Entry,
+  previous: Entry | null,
+): HTMLElement {
+  const el = document.createElement("span");
+  el.className =
+    "font-body text-sm tracking-[0.1em] uppercase font-semibold";
+  el.setAttribute("aria-hidden", "true");
+
+  // No previous entry — first entry, no baseline to compare to.
+  if (previous === null) {
+    el.textContent = "—";
+    el.className += " text-ink-muted/50";
+    return el;
+  }
+
+  const delta = latest.value - previous.value;
+
+  // No change between latest and previous — neutral state.
+  if (delta === 0) {
+    el.textContent = "—";
+    el.className += " text-ink-muted/50";
+    return el;
+  }
+
+  // What's the "good" direction for this record?
+  //   - "up"   → delta > 0 is progress
+  //   - "down" → delta < 0 is progress (less is better)
+  //   - null   → delta > 0 is progress (default: up is good)
+  const isGood = record.direction === "down" ? delta < 0 : delta > 0;
+
+  if (isGood) {
+    el.textContent = "↑";
+    el.className += " text-accent";
+  } else {
+    // Pause / regression: the value moved in the "bad" direction
+    // (or there is no direction and the value went down).
+    el.textContent = "❚❚";
+    el.className += " text-ink-muted";
+  }
+
+  return el;
+}
+
 function renderHero(record: Record, latest: Entry): HTMLElement {
   // Hero: the DOMINANT visual element. The value is huge, left-aligned,
   // and the first thing the eye sees. The unit sits below as a secondary
@@ -460,12 +588,15 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // clips any overshoot cleanly (no horizontal scrollbar, no layout
   // breakage on the flex parent).
   const heroWrap = document.createElement("div");
-  // `w-full` removed: in the collapsed focus row the hero is in a flex
-  // row next to the sparkline, so it needs its natural width (not full
-  // width). `shrink-0` prevents it from being crushed by the flex
-  // parent. `max-w-full overflow-hidden` is the overflow guard.
+  // `flex flex-col items-start justify-end` so when the h1 wraps (e.g.,
+  // a 3+ digit value on a narrow screen), the wrapper grows UPWARD
+  // from its bottom-anchored position. The row that contains the hero
+  // is `items-end`, so the hero sits at the bottom of the row; the
+  // wrapper's `justify-end` anchors the h1+unit to the bottom of the
+  // hero, and any wrapped lines of the h1 extend upward instead of
+  // pushing the unit down.
   heroWrap.className =
-    "relative flex flex-col items-start text-left shrink-0 max-w-full overflow-hidden";
+    "relative flex flex-col items-start justify-end text-left shrink-0 max-w-full min-w-0";
   heroWrap.style.viewTransitionName = VT_HERO;
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
@@ -486,19 +617,21 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // app.ts adds a temporary `pr-pulse` class to this element to flash
   // a text-shadow. Without a breaking entry the element renders plain.
   //
-  // Overflow guard on the h1 itself: `max-w-full` caps the h1 to the
-  // wrapper's width, `overflow-hidden` clips any text that still
-  // doesn't fit, and `text-clip` (text-overflow: clip, NOT ellipsis)
-  // means the cut is clean — no "..." showing for a number. The
-  // `clamp(12rem, 52vw, 28rem)` font-size is the primary guard; these
-  // classes are the safety net for the rare case where it's not enough
-  // (e.g. a 6-digit number on a very narrow screen).
+  // `overflow-hidden text-clip` REMOVED: when the value is too wide for
+  // the container, the h1 WRAPS (text-wrap) instead of truncating.
+  // The hero wrapper's `justify-end` anchors the bottom, so wrapped
+  // lines extend upward (the h1 grows in height and pushes the top
+  // of the wrapper up, not the unit down). `min-w-0` allows the h1
+  // to shrink in a flex context. `max-w-full` still caps the width.
+  // The `clamp(12rem, 52vw, 28rem)` font-size is the primary guard;
+  // wrapping is the safety net for the rare case where it's not
+  // enough (e.g. a 6-digit number on a very narrow screen).
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
   value.className =
     "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
-    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full overflow-hidden text-clip";
+    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full min-w-0";
   value.textContent = formatValue(latest.value);
 
   // Unit: displayed BELOW the value as a secondary label.
@@ -511,7 +644,16 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   return heroWrap;
 }
 
-function renderStats(record: Record, latest: Entry, prev: Entry): HTMLElement {
+function renderStats(
+  record: Record,
+  latest: Entry,
+  previous: Entry | null,
+): HTMLElement {
+  // The stats block is ALWAYS visible in the collapsed focus view,
+  // even on the first entry, where `previous` is null. The PREVIOUS
+  // and CHANGE columns render "—" when there's no baseline to
+  // compare to. The expanded view still gates on `previous !== null`
+  // (the call site decides whether to render stats at all).
   const stats = document.createElement("div");
   stats.className =
     "flex flex-col items-start gap-8 w-full pt-8 border-t border-line " +
@@ -528,7 +670,10 @@ function renderStats(record: Record, latest: Entry, prev: Entry): HTMLElement {
   previousValue.className =
     "font-body font-medium text-xl leading-[1.1] tracking-[0.05em] " +
     "uppercase tabular-nums text-ink";
-  previousValue.textContent = `${formatValue(prev.value)} ${record.unit}`;
+  previousValue.textContent =
+    previous !== null
+      ? `${formatValue(previous.value)} ${record.unit}`
+      : "—";
   previousCol.append(previousLabel, previousValue);
 
   const divider = document.createElement("span");
@@ -547,7 +692,10 @@ function renderStats(record: Record, latest: Entry, prev: Entry): HTMLElement {
   changeValue.className =
     "font-body font-medium text-xl leading-[1.1] tracking-[0.05em] " +
     "uppercase tabular-nums text-accent";
-  changeValue.textContent = formatDelta(latest.value, prev.value, record.unit);
+  changeValue.textContent =
+    previous !== null
+      ? formatDelta(latest.value, previous.value, record.unit)
+      : "—";
   changeCol.append(changeLabel, changeValue);
 
   stats.append(previousCol, divider, changeCol);
