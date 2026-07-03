@@ -78,12 +78,19 @@ export function commit(update: () => void, transitionName: string): void {
 /**
  * Formats a number for the hero / value display.
  *
- * Rules:
+  * Rules:
  *  - Trailing `.0` is stripped (25 not 25.0, 25.5 stays 25.5).
  *  - Up to 1 decimal place.
  *  - If the number is an integer, returns the integer string.
  *  - If the value is finite and < 1e6, formats normally. Otherwise returns
  *    the raw string (we don't need a compact notation for personal tracking).
+ *
+ * FALLBACK ONLY: this function does not know the record's unit. For
+ * unit-aware formatting (time → "1h 30m", weight → "78.2", distance
+ * → "30" with no decimal), use `formatValueForUnit(n, unit)` which
+ * is the preferred entry point for new code. The fallback here is
+ * kept for code paths that don't have the unit handy (and for
+ * `formatDelta` which builds on it).
  *
  * Examples:
  *   formatValue(25)      -> "25"
@@ -104,6 +111,68 @@ export function formatValue(n: number): string {
   // `toFixed(1)` is locale-independent (always "." as decimal) — we want
   // the hero to render `25.5` even in locales that would prefer `25,5`.
   return rounded.toFixed(1).replace(/\.0$/, "");
+
+}
+
+/* ---------------------------------------------------------------------------
+ * Unit-aware formatting
+ *
+ * The format of a record's value depends on its unit:
+ *   - Time (HRS, MIN, SEC): "1h 30m" / "45m" / "1m 30s" — the time
+ *     format already conveys the unit.
+ *   - Decimal (KG, LBS): "78.2" — keep precision (weight often has
+ *     a meaningful decimal).
+ *   - Integer (KM, MI, REPS, DAYS, STEPS, CAL, …): "30" — no decimal.
+ *     "30.5 km" doesn't make sense; "30 km" does.
+ *
+ * `formatValueForUnit(n, unit)` is the preferred entry point for
+ * rendering a value. `formatValue(n)` is kept as a fallback for code
+ * paths that don't have the unit handy.
+ * ------------------------------------------------------------------------- */
+
+export function formatValueForUnit(n: number, unit: string): string {
+  if (!Number.isFinite(n)) return String(n);
+  const u = unit.toUpperCase().trim();
+
+  // Time units — format as Xh Ym / Xm / Xs. The time format already
+  // conveys the unit, so callers don't need to append the unit again.
+  if (u === "HRS") return formatHours(n);
+  if (u === "MIN") return formatMinutes(n);
+  if (u === "SEC") return formatSeconds(n);
+
+  // Weight — keep one decimal of precision (78.2 is meaningful; 78 is
+  // a different kettle of fish).
+  if (u === "KG" || u === "LBS") {
+    const rounded = Math.round(n * 10) / 10;
+    if (Number.isInteger(rounded)) return String(rounded);
+    return rounded.toFixed(1).replace(/\.0$/, "");
+  }
+
+  // Everything else (KM, MI, REPS, DAYS, STEPS, CAL, …): no decimals.
+  // "30.5 km" doesn't make sense; "30 km" does.
+  return String(Math.round(n));
+}
+
+function formatHours(n: number): string {
+  const hours = Math.floor(n);
+  const minutes = Math.round((n - hours) * 60);
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
+function formatMinutes(n: number): string {
+  if (n >= 60) return formatHours(n / 60); // 90m -> "1h 30m"
+  const minutes = Math.floor(n);
+  const seconds = Math.round((n - minutes) * 60);
+  if (seconds === 0) return `${minutes}m`;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatSeconds(n: number): string {
+  if (n >= 60) return formatMinutes(n / 60); // 90s -> "1m 30s"
+  return `${Math.round(n)}s`;
 }
 
 /**
@@ -114,15 +183,27 @@ export function formatValue(n: number): string {
  * For entries, the latest entry is the "newer" and the entry before it is
  * the "older".
  *
+ * For time units (HRS/MIN/SEC), the formatted value already includes
+ * the time unit ("1h 30m"), so we DON'T append the unit again. For
+ * every other unit we append the unit string ("+5 KM", "−0.3 KG").
+ *
  * Examples:
- *   formatDelta(5,  25) -> "+5 DAYS"
- *   formatDelta(-0.6, 0) -> "−0.6 KG"
- *   formatDelta(0,  25) -> "+0 DAYS"   (display 0, not empty)
+ *   formatDelta(5,  25, "DAYS") -> "+5 DAYS"
+ *   formatDelta(-0.6, 0, "KG") -> "−0.3 KG"
+ *   formatDelta(90, 0, "MIN")  -> "+1h 30m"
+ *   formatDelta(0,  25, "DAYS") -> "+0 DAYS"   (display 0, not empty)
+ *   formatDelta(0,  0,  "DAYS") -> "—"
  */
 export function formatDelta(newer: number, older: number, unit: string): string {
   const raw = newer - older;
-  const sign = raw > 0 ? "+" : raw < 0 ? "\u2212" : "+"; // U+2212 MINUS SIGN
-  return `${sign}${formatValue(Math.abs(raw))} ${unit}`;
+  if (raw === 0) return "—";
+  const sign = raw > 0 ? "+" : "\u2212"; // U+2212 MINUS SIGN
+  const value = formatValueForUnit(Math.abs(raw), unit);
+  const u = unit.toUpperCase().trim();
+  const isTime = u === "HRS" || u === "MIN" || u === "SEC";
+  // Time values already include the unit ("1h 30m"). For everything
+  // else, append the unit so the delta is self-describing.
+  return isTime ? `${sign}${value}` : `${sign}${value} ${u}`;
 }
 
 /* ---------------------------------------------------------------------------

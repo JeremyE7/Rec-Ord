@@ -637,16 +637,23 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // to shrink in a flex context. `max-w-full` still caps the width.
   // `break-words` (overflow-wrap: break-word) lets the number itself
   // break across lines (numbers don't have natural break points).
-  // The `clamp(12rem, 52vw, 28rem)` font-size is the primary guard;
-  // wrapping is the safety net for the rare case where it's not
-  // enough (e.g. a 6-digit number on a very narrow screen).
+  // Time units (HRS, MIN, SEC) use a SMALLER font ("1h 30m" is wider
+  // than "30" so a smaller size keeps the hero visually balanced with
+  // the integer/decimal records). Everything else uses the standard
+  // hero size.
+  const isTimeUnit = record.unit.toUpperCase().trim() === "HRS" ||
+                     record.unit.toUpperCase().trim() === "MIN" ||
+                     record.unit.toUpperCase().trim() === "SEC";
+  const heroFontSize = isTimeUnit
+    ? "text-[clamp(7rem,30vw,16rem)]"
+    : "text-[clamp(12rem,52vw,28rem)]";
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
   value.className =
     "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
-    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full min-w-0 break-words";
-  value.textContent = formatValue(latest.value);
+    heroFontSize + " tabular-nums max-w-full min-w-0 break-words";
+  value.textContent = formatValueForUnit(latest.value, record.unit);
 
   // Unit: displayed BELOW the value as a secondary label.
   const unit = document.createElement("div");
@@ -686,8 +693,8 @@ function renderStats(
     "uppercase tabular-nums text-ink";
   previousValue.textContent =
     previous !== null
-      ? `${formatValue(previous.value)} ${record.unit}`
-      : "—";
+    ? `${formatValueForUnit(previous.value, record.unit)} ${record.unit}`
+    : "—";
   previousCol.append(previousLabel, previousValue);
 
   const divider = document.createElement("span");
@@ -856,7 +863,7 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
     "flex items-center justify-between gap-4 py-2 border-b border-line/40 text-ink";
   li.dataset.entryId = entry.id;
   li.dataset.entryRow = "true";
-  li.setAttribute("aria-label", `Entry: ${formatValue(entry.value)} ${record.unit}, ${formatRelativeDate(entry.date).toLowerCase()}`);
+  li.setAttribute("aria-label", `Entry: ${formatValueForUnit(entry.value, record.unit)} ${record.unit}, ${formatRelativeDate(entry.date).toLowerCase()}`);
 
   if (editingEntryId === entry.id) {
     li.append(renderEntryEditForm(entry, record));
@@ -865,7 +872,7 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
 
   const left = document.createElement("span");
   left.className = "font-body font-medium tabular-nums";
-  left.textContent = `${formatValue(entry.value)} ${record.unit}`;
+  left.textContent = `${formatValueForUnit(entry.value, record.unit)} ${record.unit}`;
 
   const rightWrap = document.createElement("span");
   rightWrap.className = "flex items-center gap-3";
@@ -1319,7 +1326,7 @@ function renderGridCell(
     "font-display font-extrabold text-4xl text-accent tabular-nums leading-none " +
     "transition-transform duration-200 group-hover:scale-[1.03] origin-right";
   valueEl.textContent = latest
-    ? `${formatValue(latest.value)} ${record.unit}`
+    ? `${formatValueForUnit(latest.value, record.unit)} ${record.unit}`
     : "—";
   // Re-introduce the shared element morph for the current record's hero
   // value. Applied to JUST the value element (not the whole cell/section)
