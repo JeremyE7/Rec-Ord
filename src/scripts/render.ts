@@ -415,7 +415,15 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
   const inner = document.createElement("div");
   if (expanded) {
     inner.className =
-      "flex flex-col items-center justify-start gap-8 w-full flex-1 pt-4";
+      // `flex-1` REMOVED: with two `flex-1` siblings (inner + expandedWrap)
+      // each took 50% of the section, leaving the expandedWrap with
+      // only half the viewport for the history + add-entry + delete.
+      // When the history was long, the content overflowed the 50%
+      // space and the add-entry button ended up below the visible
+      // area. Now the inner takes its natural height (hero + stats)
+      // and the expandedWrap is the SOLE `flex-1` sibling, filling
+      // all remaining space and scrolling properly.
+      "flex flex-col items-center justify-start gap-8 w-full pt-4";
   } else {
     // The inner fills the section's height (the section is `h-full`
     // and inner is the only child with `flex-1` in a flex column).
@@ -595,8 +603,12 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // wrapper's `justify-end` anchors the h1+unit to the bottom of the
   // hero, and any wrapped lines of the h1 extend upward instead of
   // pushing the unit down.
+  // `shrink-0` REMOVED: with it, the wrapper takes its natural width
+  // (the full text width at 28rem font) and the h1 never has to
+  // wrap. Without it, the wrapper is constrained by the row, and the
+  // h1 wraps when the value is too wide.
   heroWrap.className =
-    "relative flex flex-col items-start justify-end text-left shrink-0 max-w-full min-w-0";
+    "relative flex flex-col items-start justify-end text-left max-w-full min-w-0";
   heroWrap.style.viewTransitionName = VT_HERO;
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
@@ -623,6 +635,8 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // lines extend upward (the h1 grows in height and pushes the top
   // of the wrapper up, not the unit down). `min-w-0` allows the h1
   // to shrink in a flex context. `max-w-full` still caps the width.
+  // `break-words` (overflow-wrap: break-word) lets the number itself
+  // break across lines (numbers don't have natural break points).
   // The `clamp(12rem, 52vw, 28rem)` font-size is the primary guard;
   // wrapping is the safety net for the rare case where it's not
   // enough (e.g. a 6-digit number on a very narrow screen).
@@ -631,7 +645,7 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   value.dataset.hero = "true";
   value.className =
     "font-display font-black leading-[0.85] tracking-[-0.05em] text-accent " +
-    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full min-w-0";
+    "text-[clamp(12rem,52vw,28rem)] tabular-nums max-w-full min-w-0 break-words";
   value.textContent = formatValue(latest.value);
 
   // Unit: displayed BELOW the value as a secondary label.
