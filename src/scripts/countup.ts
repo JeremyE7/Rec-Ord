@@ -56,50 +56,34 @@ export async function animateHero(
   targetValue: number,
   unit: string,
 ): Promise<void> {
-  // Reduced motion: skip animation, set value directly.
-  if (prefersReducedMotion()) {
+  // Reduced motion, time units: skip animation, set value directly.
+  // COUNTUP + TIME UNITS DON'T MIX: for MIN and other time units the
+  // formattingFn produces strings like "6s" → "1m 30s" → "20m" every
+  // frame, which changes the element's width constantly. Even with
+  // nowrap + overflow: hidden, the innerHTML replacement at 60fps
+  // causes visible micro-jitters as the browser reflows the text at
+  // each step. CountUp is designed for plain numbers, not variable-
+  // length strings. Time units skip the animation and jump directly
+  // to the final formatted value.
+  const isTime = ["HRS", "MIN", "SEC"].includes(unit.toUpperCase().trim());
+  if (prefersReducedMotion() || isTime) {
     element.textContent = formatValueForUnit(targetValue, unit);
     return;
   }
-
-  // Pin the element to a single, stable line during the animation so
-  // the changing text length doesn't cause wrapping flicker.
-  element.classList.remove("break-words");
-  element.style.whiteSpace = "nowrap";
-  element.style.overflow = "hidden";
-
-  // Helper to restore the wrap behaviour that was temporarily disabled
-  // during the animation. Called once the animation fully completes.
-  const restoreWrap = (): void => {
-    element.style.whiteSpace = "";
-    element.style.overflow = "";
-    element.classList.add("break-words");
-  };
 
   try {
     // Always start from 0 — the scoreboard effect. The caller is
     // responsible for setting element.textContent to "0" before calling
     // this function (done in app.ts updateDOM).
-    //
-    // For time units we keep decimalPlaces: 1 so the animated number
-    // increments smoothly (e.g. 0.0 → 0.1 → 0.2 … → 7.5). For
-    // integer-only units decimalPlaces: 0 is fine (0 → 1 → 2…).
-    // The formattingFn converts the raw number to the unit-aware
-    // string at every step.
-    const isTime = ["HRS", "MIN", "SEC"].includes(unit.toUpperCase().trim());
     const counter = new CountUp(element, targetValue, {
       startVal: 0,
       duration: 1.5,
       useEasing: true,
       useGrouping: false,
-      decimalPlaces: isTime ? 1 : 0,
+      decimalPlaces: 0,
       separator: "",
-      formattingFn: (val: number) => formatValueForUnit(val, unit),
     });
 
-    // await the animation so restoreWrap runs AFTER it completes, not
-    // at the end of the synchronous try block. The caller passes
-    // `void animateHero(...)` so this doesn't block updateDOM.
     await counter.start();
 
     // If CountUp reported an error, fall back to direct text.
@@ -110,7 +94,5 @@ export async function animateHero(
     // Graceful degradation: the element already has the correct value
     // set by render.ts, so nothing to do.
     element.textContent = formatValueForUnit(targetValue, unit);
-  } finally {
-    restoreWrap();
   }
 }
