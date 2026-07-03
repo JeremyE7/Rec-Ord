@@ -31,9 +31,10 @@ import { formatValueForUnit, prefersReducedMotion } from "./motion";
  * Animate the hero element's displayed value from 0 to `targetValue`
  * using a count-up effect.
  *
- * For time units (HRS, MIN, SEC) the formatted value is not a plain
- * number ("1h 30m") — CountUp can't animate that, so we skip the
- * animation and set the value directly.
+ * CountUp natively animates a plain number. We use its `formattingFn`
+ * callback to convert the animated number to the unit-aware string at
+ * every frame, so time units ("7.5" → "7h 30m") animate smoothly
+ * alongside integer-only units.
  *
  * @param element - The `<h1>` element displaying the hero value.
  * @param targetValue - The numeric value to animate toward.
@@ -46,12 +47,8 @@ export async function animateHero(
   targetValue: number,
   unit: string,
 ): Promise<void> {
-  const u = unit.toUpperCase().trim();
-  const isTime = u === "HRS" || u === "MIN" || u === "SEC";
-
-  // Reduced motion: skip animation, set value directly with unit-aware
-  // formatting.
-  if (prefersReducedMotion() || isTime) {
+  // Reduced motion: skip animation, set value directly.
+  if (prefersReducedMotion()) {
     element.textContent = formatValueForUnit(targetValue, unit);
     return;
   }
@@ -60,15 +57,21 @@ export async function animateHero(
     // Always start from 0 — the scoreboard effect. The caller is
     // responsible for setting element.textContent to "0" before calling
     // this function (done in app.ts updateDOM).
-    // `decimalPlaces: 0` — non-time units are always integers, so the
-    // count-up should never show decimals.
+    //
+    // For time units we keep decimalPlaces: 1 so the animated number
+    // increments smoothly (e.g. 0.0 → 0.1 → 0.2 … → 7.5). For
+    // integer-only units decimalPlaces: 0 is fine (0 → 1 → 2…).
+    // The formattingFn converts the raw number to the unit-aware
+    // string at every step.
+    const isTime = ["HRS", "MIN", "SEC"].includes(unit.toUpperCase().trim());
     const counter = new CountUp(element, targetValue, {
       startVal: 0,
       duration: 1.5,
       useEasing: true,
       useGrouping: false,
-      decimalPlaces: 0,
+      decimalPlaces: isTime ? 1 : 0,
       separator: "",
+      formattingFn: (val: number) => formatValueForUnit(val, unit),
     });
 
     counter.start();
