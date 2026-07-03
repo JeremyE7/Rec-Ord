@@ -25,22 +25,34 @@
  */
 
 import { CountUp } from "countup.js";
-import { formatValue, prefersReducedMotion } from "./motion";
+import { formatValueForUnit, prefersReducedMotion } from "./motion";
 
 /**
  * Animate the hero element's displayed value from 0 to `targetValue`
  * using a count-up effect.
  *
+ * For time units (HRS, MIN, SEC) the formatted value is not a plain
+ * number ("1h 30m") — CountUp can't animate that, so we skip the
+ * animation and set the value directly.
+ *
  * @param element - The `<h1>` element displaying the hero value.
  * @param targetValue - The numeric value to animate toward.
+ * @param unit - The record's unit string, used for unit-aware
+ *               formatting. Empty string falls back to the old
+ *               `formatValue` path.
  */
 export async function animateHero(
   element: HTMLElement,
   targetValue: number,
+  unit: string,
 ): Promise<void> {
-  // Reduced motion: skip animation, set value directly.
-  if (prefersReducedMotion()) {
-    element.textContent = formatValue(targetValue);
+  const u = unit.toUpperCase().trim();
+  const isTime = u === "HRS" || u === "MIN" || u === "SEC";
+
+  // Reduced motion: skip animation, set value directly with unit-aware
+  // formatting.
+  if (prefersReducedMotion() || isTime) {
+    element.textContent = formatValueForUnit(targetValue, unit);
     return;
   }
 
@@ -48,12 +60,14 @@ export async function animateHero(
     // Always start from 0 — the scoreboard effect. The caller is
     // responsible for setting element.textContent to "0" before calling
     // this function (done in app.ts updateDOM).
+    // `decimalPlaces: 0` — non-time units are always integers, so the
+    // count-up should never show decimals.
     const counter = new CountUp(element, targetValue, {
       startVal: 0,
       duration: 1.5,
       useEasing: true,
       useGrouping: false,
-      decimalPlaces: 1,
+      decimalPlaces: 0,
       separator: "",
     });
 
@@ -61,11 +75,11 @@ export async function animateHero(
 
     // If CountUp reported an error, fall back to direct text.
     if (counter.error) {
-      element.textContent = formatValue(targetValue);
+      element.textContent = formatValueForUnit(targetValue, unit);
     }
   } catch {
     // Graceful degradation: the element already has the correct value
     // set by render.ts, so nothing to do.
-    element.textContent = formatValue(targetValue);
+    element.textContent = formatValueForUnit(targetValue, unit);
   }
 }

@@ -116,7 +116,7 @@ function updateDOM(): void {
       const hero = document.getElementById("hero-value");
       if (hero !== null) {
         hero.textContent = "0";
-        void animateHero(hero, latestValue);
+        void animateHero(hero, latestValue, record?.unit ?? "");
       }
     }
     lastRenderedRecordId = state.currentRecordId;
