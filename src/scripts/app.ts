@@ -547,7 +547,7 @@ function deleteEntry(entryId: string): void {
  * and `false` when the action was not applicable in the current state.
  * ------------------------------------------------------------------------- */
 
-function goToNextRecord(): boolean {
+function goToNextRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded) return false;
   const idx = currentIndex(state);
@@ -555,11 +555,11 @@ function goToNextRecord(): boolean {
   if (!next) return false; // last/oldest — spring back
   commit(() => {
     setState({ currentRecordId: next.id });
-  }, "nav-vertical");
+  }, "nav-vertical", undefined, velocity);
   return true;
 }
 
-function goToPreviousRecord(): boolean {
+function goToPreviousRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "focus") return false;
   if (state.expanded && state.addingEntry) {
@@ -582,11 +582,11 @@ function goToPreviousRecord(): boolean {
   if (!prev) return false; // first/newest — spring back
   commit(() => {
     setState({ currentRecordId: prev.id });
-  }, "nav-vertical");
+  }, "nav-vertical", undefined, velocity);
   return true;
 }
 
-function openNewRecord(): boolean {
+function openNewRecord(velocity?: number): boolean {
   const state = getState();
   // Only available from the collapsed focus view. In expanded view, the
   // user is in "edit mode" — horizontal swipes are intentionally blocked
@@ -594,16 +594,16 @@ function openNewRecord(): boolean {
   if (state.view !== "focus" || state.expanded) return false;
   commit(() => {
     setState({ view: "new" });
-  }, "push-horizontal-in");
+  }, "push-horizontal-in", undefined, velocity);
   return true;
 }
 
-function closeNewRecord(): boolean {
+function closeNewRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "new") return false;
   commit(() => {
     setState({ view: "focus" });
-  }, "push-horizontal-out");
+  }, "push-horizontal-out", undefined, velocity);
   return true;
 }
 
@@ -667,10 +667,10 @@ function findRecordIdAt(state: AppState, point: { x: number; y: number }): strin
  * ------------------------------------------------------------------------- */
 
 const gestureHandlers: GestureHandlers = {
-  onSwipeUp: () => goToNextRecord(),
-  onSwipeDown: () => goToPreviousRecord(),
-  onSwipeRight: () => openNewRecord(),
-  onSwipeLeft: () => closeNewRecord(),
+  onSwipeUp: (v) => goToNextRecord(v),
+  onSwipeDown: (v) => goToPreviousRecord(v),
+  onSwipeRight: (v) => openNewRecord(v),
+  onSwipeLeft: (v) => closeNewRecord(v),
   onLongPress: () => toggleEdit(),
   onPinchOut: () => openGrid(),
   onPinchIn: (c) => closeGrid(c),
@@ -843,6 +843,18 @@ function init(): void {
     getView: () => getState().view,
     getExpanded: () => getState().expanded,
     getHasRecords: () => getState().records.length > 0,
+    canSwipeVertical: (direction) => {
+      const state = getState();
+      if (state.view !== "focus") return false;
+      const idx = currentIndex(state);
+      if (direction === "up") {
+        // Swiping up goes to the next (older) record.
+        return state.records[idx + 1] !== undefined;
+      }
+      // Swiping down goes to the previous (newer) record, or collapses.
+      if (state.expanded) return true; // swipe down always valid when expanded
+      return state.records[idx - 1] !== undefined;
+    },
     handlers: gestureHandlers,
   });
 

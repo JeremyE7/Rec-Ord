@@ -52,6 +52,8 @@ import {
   releasePress,
   resetProgressBar,
   hideSwipeHint,
+  rubberBand,
+  rubberBandSnapBack,
 } from "./motion-controller";
 
 /* ---------------------------------------------------------------------------
@@ -86,13 +88,13 @@ const HAPTIC_MS = 12;
 
 export interface GestureHandlers {
   /** Vertical swipe upward on the focus card — go to next (older) record. */
-  onSwipeUp?: () => boolean | void;
+  onSwipeUp?: (velocity?: number) => boolean | void;
   /** Vertical swipe downward — go to previous (newer) record, or collapse. */
-  onSwipeDown?: () => boolean | void;
+  onSwipeDown?: (velocity?: number) => boolean | void;
   /** Horizontal swipe right on focus — open the new-record form. */
-  onSwipeRight?: () => boolean | void;
+  onSwipeRight?: (velocity?: number) => boolean | void;
   /** Horizontal swipe left inside the new-record form — go back to focus. */
-  onSwipeLeft?: () => boolean | void;
+  onSwipeLeft?: (velocity?: number) => boolean | void;
   /** Long press on focus — expand to edit mode. */
   onLongPress?: () => boolean | void;
   /** Two-finger spread — open grid view. */
@@ -209,11 +211,12 @@ function haptic(): void {
  * and consistent spring physics across the app.
  * ------------------------------------------------------------------------- */
 
-function springBackDrag(root: HTMLElement): void {
+function springBackDrag(root: HTMLElement, atEdge = false): void {
   const card = findFocusCard(root);
   if (card !== null) {
-    // Fire-and-forget: the motion controller animates via WAAPI.
-    void springBack(card);
+    // Use sticky spring at edges (rubber-band feel), gentle spring otherwise.
+    const anim = atEdge ? rubberBandSnapBack(card) : springBack(card);
+    void anim;
   }
   // Reset the progress bar to empty.
   const progressEl = document.getElementById("swipe-progress");
@@ -235,6 +238,8 @@ export interface AttachOptions {
   getView: () => "focus" | "new" | "grid";
   getExpanded: () => boolean;
   getHasRecords: () => boolean;
+  /** Returns true if swiping in the given vertical direction will navigate. */
+  canSwipeVertical: (direction: "up" | "down") => boolean;
   root: HTMLElement;
   handlers: GestureHandlers;
 }
@@ -245,7 +250,7 @@ export interface AttachOptions {
  * it before re-attaching after a re-render or page-load.
  */
 export function attachGestures(opts: AttachOptions): () => void {
-  const { root, getView, getExpanded, getHasRecords, handlers } = opts;
+  const { root, getView, getExpanded, getHasRecords, canSwipeVertical, handlers } = opts;
   const state = newState();
   const ac = new AbortController();
   const opts2 = { signal: ac.signal };
@@ -306,11 +311,22 @@ export function attachGestures(opts: AttachOptions): () => void {
     if (card === null) return;
 
     if (state.dragLocked === "v") {
-      // Vertical drag: delegate to motion controller for GPU-composited
-      // transform + opacity feedback.
-      updateDragFeedback({ card, dy: lastDy });
+      // Vertical drag: apply rubber-band dampening at edges, then
+      // delegate to motion controller for GPU-composited feedback.
+      let effectiveDy = lastDy;
+      const atTopEdge = lastDy < 0 && !canSwipeVertical("up");
+      const atBottomEdge = lastDy > 0 && !canSwipeVertical("down");
+      if (atTopEdge || atBottomEdge) {
+        // Past the edge: dampen the offset logarithmically (rubber-band feel).
+        effectiveDy = rubberBand({ offset: Math.abs(lastDy) });
+        if (lastDy < 0) effectiveDy = -effectiveDy;
+      }
+      updateDragFeedback({ card, dy: effectiveDy });
       // Progress bar: fills over PROGRESS_DISTANCE, reaches 100% at commit threshold.
-      const progress = Math.min(Math.abs(lastDy) / PROGRESS_DISTANCE, 1);
+      // Only fill when NOT at an edge (no progress to show at boundaries).
+      const progress = (atTopEdge || atBottomEdge)
+        ? 0
+        : Math.min(Math.abs(lastDy) / PROGRESS_DISTANCE, 1);
       const progressEl = document.getElementById("swipe-progress");
       if (progressEl !== null) {
         progressEl.style.transform = `scaleX(${progress})`;
@@ -604,12 +620,14 @@ export function attachGestures(opts: AttachOptions): () => void {
     const passesDistance = absDy > SWIPE_DISTANCE;
     const passesVelocity = dt > 0 && absDy / dt > SWIPE_VELOCITY;
     if (!passesDistance && !passesVelocity) return false;
+    // Velocity in px/ms — used by the view transition to scale exit duration.
+    const velocity = dt > 0 ? absDy / dt : 0;
     if (dy < 0) {
-      const result = handlers.onSwipeUp?.();
+      const result = handlers.onSwipeUp?.(velocity);
       if (result === true) haptic();
       return result === true;
     }
-    const result = handlers.onSwipeDown?.();
+    const result = handlers.onSwipeDown?.(velocity);
     if (result === true) haptic();
     return result === true;
   };
@@ -619,19 +637,20 @@ export function attachGestures(opts: AttachOptions): () => void {
     const passesDistance = absDx > SWIPE_DISTANCE;
     const passesVelocity = dt > 0 && absDx / dt > SWIPE_VELOCITY;
     if (!passesDistance && !passesVelocity) return false;
+    const velocity = dt > 0 ? absDx / dt : 0;
     if (dx > 0) {
       // Swipe right: open the new-record form, ONLY from collapsed
       // focus view. In expanded view the gesture handler should have
       // already blocked the axis-lock, but we double-check here.
       if (getView() === "focus" && !getExpanded()) {
-        const result = handlers.onSwipeRight?.();
+        const result = handlers.onSwipeRight?.(velocity);
         if (result === true) haptic();
         return result === true;
       }
       return false;
     }
     if (getView() === "new") {
-      const result = handlers.onSwipeLeft?.();
+      const result = handlers.onSwipeLeft?.(velocity);
       if (result === true) haptic();
       return result === true;
     }
@@ -670,7 +689,11 @@ export function attachGestures(opts: AttachOptions): () => void {
 
     if (!commit) {
       if (wasDragging || state.dragLocked !== null) {
-        springBackDrag(root);
+        const atEdge = state.dragLocked === "v" && (
+          (lastDy < 0 && !canSwipeVertical("up")) ||
+          (lastDy > 0 && !canSwipeVertical("down"))
+        );
+        springBackDrag(root, atEdge);
       }
       releaseCapture();
       return;
@@ -705,7 +728,11 @@ export function attachGestures(opts: AttachOptions): () => void {
           // the crossfade isn't dimmed.
           card.style.opacity = "";
         } else {
-          springBackDrag(root);
+          const atEdge = state.dragLocked === "v" && (
+            (dy < 0 && !canSwipeVertical("up")) ||
+            (dy > 0 && !canSwipeVertical("down"))
+          );
+          springBackDrag(root, atEdge);
         }
       }
       // Reset the fixed progress bar either way.

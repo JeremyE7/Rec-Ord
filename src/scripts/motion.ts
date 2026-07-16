@@ -54,6 +54,7 @@ export async function commit(
   update: () => void,
   transitionName: string,
   container?: HTMLElement,
+  velocity?: number,
 ): Promise<void> {
   const mount = container ?? document.getElementById("app");
   if (mount === null) {
@@ -83,22 +84,20 @@ export async function commit(
   // Route to the appropriate transition function
   switch (transitionName) {
     case "nav-vertical":
-      // Direction is determined by the gesture handler, but we default to "up"
-      // The gesture handler should pass the direction via a custom event or
-      // by setting a data attribute. For now, we'll use "up" as default.
       await navVertical({
         oldEl,
         newEl,
         direction: "up", // TODO: get from gesture context
+        velocity,
       });
       break;
 
     case "push-horizontal-in":
-      await pushHorizontal({ oldEl, newEl, direction: "in" });
+      await pushHorizontal({ oldEl, newEl, direction: "in", velocity });
       break;
 
     case "push-horizontal-out":
-      await pushHorizontal({ oldEl, newEl, direction: "out" });
+      await pushHorizontal({ oldEl, newEl, direction: "out", velocity });
       break;
 
     case "expand":

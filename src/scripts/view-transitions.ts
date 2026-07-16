@@ -85,10 +85,16 @@ export interface NavVerticalOptions {
   newEl: HTMLElement;
   /** Direction of the swipe: "up" means swiping up (going to next/older). */
   direction: "up" | "down";
+  /** Swipe velocity in px/ms. Fast swipes (> 0.5) use shorter duration. */
+  velocity?: number;
 }
 
 /**
  * Animate a vertical navigation transition.
+ *
+ * Fast swipes (velocity > 0.5 px/ms) use a shorter exit duration
+ * to match the user's finger speed. Slow swipes use the default
+ * medium duration for a more deliberate feel.
  *
  * @returns A promise that resolves when both animations complete
  */
@@ -96,6 +102,7 @@ export async function navVertical({
   oldEl,
   newEl,
   direction,
+  velocity = 0,
 }: NavVerticalOptions): Promise<void> {
   prepareExit(oldEl);
 
@@ -103,6 +110,11 @@ export async function navVertical({
   const newEntrance = direction === "up" ? transforms.slideFromBottom : transforms.slideToTop;
 
   prepareEntrance(newEl, `translateY(${newEntrance})`);
+
+  // Scale duration by velocity: fast swipes are 60% of default duration.
+  const exitDuration = velocity > 0.5
+    ? (durations.medium * 0.6) / 1000
+    : durations.medium / 1000;
 
   const [oldAnim, newAnim] = await Promise.all([
     animateSafe(
@@ -112,7 +124,7 @@ export async function navVertical({
         opacity: opacity.ghost,
       },
       {
-        duration: durations.medium / 1000,
+        duration: exitDuration,
         ease: easings.exit,
       },
     ),
@@ -148,6 +160,8 @@ export interface PushHorizontalOptions {
   newEl: HTMLElement;
   /** Direction: "in" means opening the form (focus → new), "out" means closing. */
   direction: "in" | "out";
+  /** Swipe velocity in px/ms. Fast swipes (> 0.5) use shorter duration. */
+  velocity?: number;
 }
 
 /**
@@ -159,6 +173,7 @@ export async function pushHorizontal({
   oldEl,
   newEl,
   direction,
+  velocity = 0,
 }: PushHorizontalOptions): Promise<void> {
   prepareExit(oldEl);
 
@@ -171,6 +186,11 @@ export async function pushHorizontal({
     `translateX(${newEntranceTransform * 100}%)`,
   );
 
+  // Scale duration by velocity: fast swipes are 60% of default duration.
+  const exitDuration = velocity > 0.5
+    ? (durations.medium * 0.6) / 1000
+    : durations.medium / 1000;
+
   const [oldAnim, newAnim] = await Promise.all([
     animateSafe(
       oldEl,
@@ -179,7 +199,7 @@ export async function pushHorizontal({
         opacity: opacity.muted,
       },
       {
-        duration: durations.medium / 1000,
+        duration: exitDuration,
         ease: easings.exit,
       },
     ),

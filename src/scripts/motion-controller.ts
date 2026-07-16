@@ -351,8 +351,6 @@ export function hideSwipeHint(hint: HTMLElement): void {
  * ------------------------------------------------------------------------- */
 
 export interface RubberBandOptions {
-  /** The element to stretch. */
-  card: HTMLElement;
   /** The drag offset (positive = past the edge, negative = valid range). */
   offset: number;
   /** Maximum stretch distance before resistance becomes very strong. */
