@@ -15,18 +15,9 @@
  *   - pinch out:         currentDist / startDist >= 1.25
  *   - pinch in:          currentDist / startDist <= 0.75
  *
- * Live drag: while a vertical swipe is in progress, the focus card is
- * translated by `translate3d(0, dy, 0)` (GPU-composited) and its opacity
- * is reduced. Updates are coalesced through `requestAnimationFrame` so
- * rapid `pointermove` events (60+ Hz on some mobile devices) don't cause
- * layout thrashing. On commit, the transform is left in place so the
- * browser captures the dragged rect as the "old" snapshot. On cancel, a
- * spring-physics `requestAnimationFrame` loop lerps the card back to
- * translateY(0).
- *
- * Spring: critically-damped approach (SPRING_LERP=0.22,
- * SPRING_VELOCITY_DECAY=0.78) with a "soft near zero" force modifier so
- * the spring doesn't over-correct when the value is close to 0.
+ * Spring physics and drag feedback are delegated to the motion controller
+ * (`motion-controller.ts`), which uses Motion One for consistent, GPU-
+ * composited animations across the app.
  *
  * Swipe progress: a CSS custom property `--swipe-progress` (0..1) is set
  * on the `#swipe-progress` element (a fixed-position 2px bar at the
@@ -52,7 +43,16 @@
  * closing the grid" bug.
  */
 
-import { prefersReducedMotion } from "./motion";
+import {
+  prefersReducedMotion,
+  springBack,
+  updateDragFeedback,
+  clearDragFeedback,
+  pressSignal,
+  releasePress,
+  resetProgressBar,
+  hideSwipeHint,
+} from "./motion-controller";
 
 /* ---------------------------------------------------------------------------
  * Constants
@@ -76,13 +76,8 @@ const LONG_PRESS_MOVE = 14; // px of movement allowed before long-press cancels
 const PINCH_OUT = 1.25;
 const PINCH_IN = 0.75;
 const AXIS_LOCK_THRESHOLD = 6; // px — dead zone before the card starts moving (was 12; half = snappier feel)
-const DRAG_OPACITY_DIVISOR = 500; // |dy|/500, capped at 0.25
-const DRAG_OPACITY_MAX = 0.25; // less aggressive opacity reduction during drag (was 0.4)
 const MAX_DRAG_DY = 500; // px — cap lastDy to prevent over-fling
 const ZOMBIE_THRESHOLD_MS = 1500; // pointers older than this are zombies
-const SPRING_LERP = 0.30; // spring stiffness (one subtle overshoot)
-const SPRING_VELOCITY_DECAY = 0.80; // damping tuned for a single bouncy overshoot
-const SPRING_SETTLE_THRESHOLD = 0.1; // px / (px/frame)
 const HAPTIC_MS = 12;
 
 /* ---------------------------------------------------------------------------
@@ -207,72 +202,28 @@ function haptic(): void {
 }
 
 /* ---------------------------------------------------------------------------
- * Spring-physics snap-back
+ * Spring-physics snap-back (via motion controller)
  *
- * Replaces the previous WAAPI `card.animate(...)` with a manual
- * `requestAnimationFrame` loop that lerps the inline transform/opacity
- * back to 0 with a critically-damped spring. The "soft near zero"
- * modifier reduces force when |current| is small, preventing the
- * spring from over-correcting and producing visible oscillation near
- * the rest position.
+ * All spring/animation logic is delegated to the motion controller.
+ * The controller handles reduced-motion awareness, GPU compositing,
+ * and consistent spring physics across the app.
  * ------------------------------------------------------------------------- */
-
-function springBackElement(card: HTMLElement, axis: "x" | "y"): void {
-  if (prefersReducedMotion()) {
-    card.style.transform = "";
-    card.style.opacity = "";
-    return;
-  }
-  // Read the current inline transform value. If no transform, current = 0.
-  const m = card.style.transform.match(/-?\d+(\.\d+)?/);
-  let current = m !== null ? parseFloat(m[0]) : 0;
-  if (!Number.isFinite(current)) current = 0;
-  let velocity = 0;
-
-  function tick(): void {
-    // "Soft near zero" — reduce force when close to rest to prevent
-    // over-correction. The force scales linearly up to |current| = 5px.
-    const softness = Math.min(1, Math.abs(current) / 5);
-    const force = (0 - current) * SPRING_LERP * softness;
-    velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
-    current += velocity;
-    if (axis === "y") {
-      card.style.transform = `translate3d(0, ${current}px, 0)`;
-    } else {
-      card.style.transform = `translate3d(${current}px, 0, 0)`;
-    }
-    // Opacity mirrors the live-drag formula: 1 - min(|dy|/400, 0.4).
-    const opacity = 1 - Math.min(Math.abs(current) / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
-    card.style.opacity = String(opacity);
-    if (Math.abs(current) > SPRING_SETTLE_THRESHOLD || Math.abs(velocity) > SPRING_SETTLE_THRESHOLD) {
-      requestAnimationFrame(tick);
-    } else {
-      card.style.transform = "";
-      card.style.opacity = "";
-    }
-  }
-  requestAnimationFrame(tick);
-}
-
-function springBack(card: HTMLElement): void {
-  springBackElement(card, "y");
-}
 
 function springBackDrag(root: HTMLElement): void {
   const card = findFocusCard(root);
   if (card !== null) {
-    springBack(card);
+    // Fire-and-forget: the motion controller animates via WAAPI.
+    void springBack(card);
   }
-  // Clear the progress custom property on the fixed bar so it resets.
+  // Reset the progress bar to empty.
   const progressEl = document.getElementById("swipe-progress");
   if (progressEl !== null) {
-    progressEl.style.removeProperty("--swipe-progress");
+    resetProgressBar(progressEl);
   }
-  // Clear the swipe-hint-right so it slides back off-screen.
+  // Hide the swipe hint (slides back off-screen with animation).
   const hintEl = document.getElementById("swipe-hint-right");
   if (hintEl !== null) {
-    hintEl.style.removeProperty("--swipe-hint-x");
-    hintEl.style.removeProperty("--swipe-hint-opacity");
+    hideSwipeHint(hintEl);
   }
 }
 
@@ -318,7 +269,8 @@ export function attachGestures(opts: AttachOptions): () => void {
 
   const removePressingClass = (): void => {
     if (state.pressingElement !== null) {
-      state.pressingElement.classList.remove("is-pressing");
+      // Use motion controller to release press (animates back to full scale).
+      void releasePress(state.pressingElement);
       state.pressingElement = null;
     }
   };
@@ -352,53 +304,34 @@ export function attachGestures(opts: AttachOptions): () => void {
     if (!state.dragging) return;
     const card = findFocusCard(root);
     if (card === null) return;
+
     if (state.dragLocked === "v") {
-      // Cap lastDy to prevent over-fling.
-      const clampedDy = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, lastDy));
-      const absDy = Math.abs(clampedDy);
-      const opacity = 1 - Math.min(absDy / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
-      // Use translate3d for GPU compositing — eliminates jank on mobile.
-      card.style.transform = `translate3d(0, ${clampedDy}px, 0)`;
-      card.style.opacity = String(opacity);
-      // Swipe progress bar: set the CSS custom property on the fixed
-      // #swipe-progress element (lives in index.astro, anchored to the
-      // viewport bottom — independent of the focus card's position).
-      const progress = Math.min(absDy / PROGRESS_DISTANCE, 1);
+      // Vertical drag: delegate to motion controller for GPU-composited
+      // transform + opacity feedback.
+      updateDragFeedback({ card, dy: lastDy });
+      // Progress bar: fills over PROGRESS_DISTANCE, reaches 100% at commit threshold.
+      const progress = Math.min(Math.abs(lastDy) / PROGRESS_DISTANCE, 1);
       const progressEl = document.getElementById("swipe-progress");
       if (progressEl !== null) {
-        progressEl.style.setProperty("--swipe-progress", String(progress));
+        progressEl.style.transform = `scaleX(${progress})`;
       }
     } else if (state.dragLocked === "h") {
-      // Horizontal live drag: animate the card so the user gets
-      // immediate feedback while the form slides in from the right.
-      // The opacity dips slightly to signal "this is a transition in
-      // progress" without making the card disappear.
-      const clampedDx = Math.max(-MAX_DRAG_DY, Math.min(MAX_DRAG_DY, lastDx));
-      const absDx = Math.abs(clampedDx);
-      const opacity = 1 - Math.min(absDx / DRAG_OPACITY_DIVISOR, DRAG_OPACITY_MAX);
-      card.style.transform = `translate3d(${clampedDx}px, 0, 0)`;
-      card.style.opacity = String(opacity);
-      // Swipe-right hint: slide in from the left as the user drags
-      // right. Visible only while dragging, fully hidden at rest.
-      // The label position is driven by a CSS custom property so the
-      // gesture handler doesn't touch inline styles directly.
+      // Horizontal drag: delegate to motion controller.
+      updateDragFeedback({ card, dy: 0, dx: lastDx });
+      // Swipe-right hint: slide in from the left as the user drags right.
       if (lastDx > 0) {
-        // Swiping right (toward new record).
-        const hintProgress = Math.min(absDx / PROGRESS_DISTANCE, 1);
+        const hintProgress = Math.min(Math.abs(lastDx) / PROGRESS_DISTANCE, 1);
         const hintEl = document.getElementById("swipe-hint-right");
         if (hintEl !== null) {
-          // At progress=0, x = -200px (fully off-screen left).
-          // At progress=1, x = 0 (in its resting position).
           const x = -200 + hintProgress * 200;
-          hintEl.style.setProperty("--swipe-hint-x", `${x}px`);
-          hintEl.style.setProperty("--swipe-hint-opacity", String(hintProgress));
+          hintEl.style.transform = `translate3d(${x}px, -50%, 0)`;
+          hintEl.style.opacity = String(hintProgress);
         }
       } else {
-        // Swiping left (would close new-record). No hint for that
-        // direction; clear the right-hint if it was visible.
+        // Swiping left: hide the right-hint.
         const hintEl = document.getElementById("swipe-hint-right");
         if (hintEl !== null) {
-          hintEl.style.setProperty("--swipe-hint-opacity", "0");
+          hintEl.style.opacity = "0";
         }
       }
     }
@@ -538,7 +471,8 @@ export function attachGestures(opts: AttachOptions): () => void {
           state.pressingElement = card;
           state.pressSignalTimer = setTimeout(() => {
             if (state.pressingElement !== null) {
-              state.pressingElement.classList.add("is-pressing");
+              // Use motion controller for press signal (scale + opacity).
+              void pressSignal(state.pressingElement);
             }
           }, PRESS_SIGNAL_MS);
         }
@@ -738,12 +672,6 @@ export function attachGestures(opts: AttachOptions): () => void {
       if (wasDragging || state.dragLocked !== null) {
         springBackDrag(root);
       }
-      // Reset the swipe-hint-right on cancel too.
-      const hintEl = document.getElementById("swipe-hint-right");
-      if (hintEl !== null) {
-        hintEl.style.removeProperty("--swipe-hint-x");
-        hintEl.style.removeProperty("--swipe-hint-opacity");
-      }
       releaseCapture();
       return;
     }
@@ -783,13 +711,12 @@ export function attachGestures(opts: AttachOptions): () => void {
       // Reset the fixed progress bar either way.
       const progressEl = document.getElementById("swipe-progress");
       if (progressEl !== null) {
-        progressEl.style.removeProperty("--swipe-progress");
+        resetProgressBar(progressEl);
       }
-      // Reset the swipe-hint-right (the "NEW RECORD" label).
+      // Hide the swipe hint.
       const hintEl = document.getElementById("swipe-hint-right");
       if (hintEl !== null) {
-        hintEl.style.removeProperty("--swipe-hint-x");
-        hintEl.style.removeProperty("--swipe-hint-opacity");
+        hideSwipeHint(hintEl);
       }
     }
 
@@ -846,7 +773,6 @@ export interface RowSwipeHandlers {
 
 export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): () => void {
   const ROW_THRESHOLD = 50;
-  const ROW_OPACITY_DIVISOR = 100;
   const ac = new AbortController();
   const opts2 = { signal: ac.signal };
 
@@ -884,10 +810,9 @@ export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): ()
       axis = absDx > absDy ? "h" : "v";
     }
     if (axis === "h") {
+      // Delegate to motion controller for GPU-composited drag feedback.
       const tx = Math.min(0, dx);
-      row.style.transform = `translate3d(${tx}px, 0, 0)`;
-      const opacity = 1 - Math.min(absDx / ROW_OPACITY_DIVISOR, 0.6);
-      row.style.opacity = String(opacity);
+      updateDragFeedback({ card: row, dy: 0, dx: tx });
     }
   };
 
@@ -901,33 +826,11 @@ export function attachRowSwipe(row: HTMLElement, handlers: RowSwipeHandlers): ()
       // ignore
     }
     if (axis === "h" && dx < -ROW_THRESHOLD) {
-      row.style.transform = "";
-      row.style.opacity = "";
+      clearDragFeedback(row);
       handlers.onDelete();
     } else {
-      // Spring back via rAF.
-      if (prefersReducedMotion()) {
-        row.style.transform = "";
-        row.style.opacity = "";
-        return;
-      }
-      let current = parseFloat((row.style.transform.match(/-?\d+(\.\d+)?/)?.[0]) ?? "0");
-      if (!Number.isFinite(current)) current = 0;
-      let velocity = 0;
-      function tick(): void {
-        const softness = Math.min(1, Math.abs(current) / 5);
-        const force = (0 - current) * SPRING_LERP * softness;
-        velocity = (velocity + force) * SPRING_VELOCITY_DECAY;
-        current += velocity;
-        row.style.transform = `translate3d(${current}px, 0, 0)`;
-        if (Math.abs(current) > 0.1 || Math.abs(velocity) > 0.1) {
-          requestAnimationFrame(tick);
-        } else {
-          row.style.transform = "";
-          row.style.opacity = "";
-        }
-      }
-      requestAnimationFrame(tick);
+      // Spring back via motion controller (handles reduced-motion internally).
+      void springBack(row);
     }
   };
 
