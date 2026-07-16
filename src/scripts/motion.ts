@@ -12,6 +12,14 @@
  */
 
 import type { Entry, Record } from "./types";
+import {
+  collapse,
+  expand,
+  fade,
+  navVertical,
+  pushHorizontal,
+  scaleMorph,
+} from "./view-transitions";
 
 /* ---------------------------------------------------------------------------
  * View transition wrapper
@@ -25,50 +33,93 @@ export function prefersReducedMotion(): boolean {
 }
 
 /**
- * Wrap a DOM mutation in a browser view transition.
+ * Wrap a DOM mutation in a view transition.
  *
- * - `transitionName` becomes `document.documentElement.dataset.transition`,
- *   which the `motion.css` rules key on to select the right keyframes.
- * - On reduced motion (or when the browser lacks `startViewTransition`),
- *   the update is applied synchronously without any animation.
- * - The `data-transition` attribute is cleared on the next `transitionend`
- *   on the documentElement so it doesn't leak into the next transition.
+ * - Captures the old element before the update
+ * - Applies the DOM mutation
+ * - Captures the new element
+ * - Animates old out + new in using the appropriate transition function
+ * - On reduced motion, the update is applied synchronously without animation
+ *
+ * The `transitionName` determines which transition function to use:
+ *   - "nav-vertical" → slide up/down (swipe between records)
+ *   - "push-horizontal-in" → slide right (focus → new-record)
+ *   - "push-horizontal-out" → slide left (new-record → focus)
+ *   - "expand" → fade + grow (focus → expanded)
+ *   - "collapse" → fade + shrink (expanded → focus)
+ *   - "scale-morph" → scale down/up (focus ↔ grid)
+ *   - "fade" → simple crossfade (non-semantic changes)
  */
-export function commit(update: () => void, transitionName: string): void {
-  const root = document.documentElement;
-
-  const apply = (): void => {
-    root.dataset.transition = transitionName;
+export async function commit(
+  update: () => void,
+  transitionName: string,
+  container?: HTMLElement,
+): Promise<void> {
+  const mount = container ?? document.getElementById("app");
+  if (mount === null) {
     update();
-  };
-
-  const cleanup = (): void => {
-    if (root.dataset.transition === transitionName) {
-      delete root.dataset.transition;
-    }
-  };
-
-  if (prefersReducedMotion() || typeof document.startViewTransition !== "function") {
-    apply();
-    // Best-effort cleanup: clear the attribute after a microtask so any
-    // synchronous CSS that read it had a chance to.
-    queueMicrotask(cleanup);
     return;
   }
 
-  document.startViewTransition(() => {
-    apply();
-    return Promise.resolve();
-  });
+  // Capture the old element
+  const oldEl = mount.firstElementChild as HTMLElement | null;
 
-  // Clear the attribute once the view transition completes (its root
-  // pseudo-element fires `transitionend`). The `once: true` flag is
-  // important — we don't want to accidentally fire on inner transitions.
-  root.addEventListener("transitionend", cleanup, { once: true });
+  // Apply the DOM mutation
+  update();
 
-  // Failsafe: if no transitionend ever fires (e.g. some browsers don't
-  // emit it on the documentElement pseudo), clear after 1s anyway.
-  setTimeout(cleanup, 1000);
+  // Capture the new element
+  const newEl = mount.firstElementChild as HTMLElement | null;
+
+  // If there's no old/new element, or they're the same, we're done
+  if (oldEl === null || newEl === null || oldEl === newEl) {
+    return;
+  }
+
+  // If reduced motion, skip animations
+  if (prefersReducedMotion()) {
+    return;
+  }
+
+  // Route to the appropriate transition function
+  switch (transitionName) {
+    case "nav-vertical":
+      // Direction is determined by the gesture handler, but we default to "up"
+      // The gesture handler should pass the direction via a custom event or
+      // by setting a data attribute. For now, we'll use "up" as default.
+      await navVertical({
+        oldEl,
+        newEl,
+        direction: "up", // TODO: get from gesture context
+      });
+      break;
+
+    case "push-horizontal-in":
+      await pushHorizontal({ oldEl, newEl, direction: "in" });
+      break;
+
+    case "push-horizontal-out":
+      await pushHorizontal({ oldEl, newEl, direction: "out" });
+      break;
+
+    case "expand":
+      await expand({ oldEl, newEl });
+      break;
+
+    case "collapse":
+      await collapse({ oldEl, newEl });
+      break;
+
+    case "scale-morph":
+      // Direction is determined by the gesture (pinch out = "out", pinch in = "in")
+      // For now, default to "out" (opening the grid)
+      await scaleMorph({ oldEl, newEl, direction: "out" }); // TODO: get from gesture context
+      break;
+
+    case "fade":
+    default:
+      await fade({ oldEl, newEl });
+      break;
+  }
 }
 
 /* ---------------------------------------------------------------------------
