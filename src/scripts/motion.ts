@@ -105,6 +105,73 @@ function sharedElements(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>("[data-flip-id]")];
 }
 
+function sharedElementIds(elements: Iterable<HTMLElement>): Set<string> {
+  const ids = new Set<string>();
+  for (const element of elements) {
+    const id = element.dataset.flipId;
+    if (id !== undefined && id !== "") ids.add(id);
+  }
+  return ids;
+}
+
+function createRevealShield(mount: HTMLElement): HTMLElement {
+  const shield = document.createElement("div");
+  shield.dataset.motionReveal = "true";
+  shield.setAttribute("aria-hidden", "true");
+  mount.append(shield);
+  gsap.set(shield, {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "var(--surface-page)",
+    pointerEvents: "none",
+    zIndex: 2,
+  });
+  return shield;
+}
+
+function exposeSharedOverflow(
+  targets: Iterable<HTMLElement>,
+  boundary: HTMLElement,
+): () => void {
+  const candidates = new Set<HTMLElement>();
+  for (const target of targets) {
+    let ancestor = target.parentElement;
+    while (ancestor !== null && ancestor !== boundary) {
+      candidates.add(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+  }
+
+  const clipped = [...candidates]
+    .filter((element) => {
+      const style = getComputedStyle(element);
+      return style.overflowX !== "visible" || style.overflowY !== "visible";
+    })
+    .map((element) => ({
+      element,
+      overflow: element.style.overflow,
+      overflowX: element.style.overflowX,
+      overflowY: element.style.overflowY,
+    }));
+
+  for (const { element } of clipped) {
+    element.style.overflow = "visible";
+    element.style.overflowX = "visible";
+    element.style.overflowY = "visible";
+  }
+
+  return () => {
+    for (const snapshot of clipped) {
+      snapshot.element.style.overflow = snapshot.overflow;
+      snapshot.element.style.overflowX = snapshot.overflowX;
+      snapshot.element.style.overflowY = snapshot.overflowY;
+    }
+  };
+}
+
 function animateLocalChange(mount: HTMLElement, newElement: HTMLElement): Promise<void> {
   const localTargets = [
     ...newElement.querySelectorAll<HTMLElement>('[data-motion-layer="local"]'),
@@ -132,20 +199,31 @@ function animateSharedLayout(
   mount: HTMLElement,
   newElement: HTMLElement,
   state: CapturedFlipState,
-  spec: Extract<MotionTransition, { type: "expand" | "grid" }>,
+  previousSharedIds: ReadonlySet<string>,
 ): Promise<void> {
-  const sharedTargets = sharedElements(newElement);
+  const sharedTargets = sharedElements(newElement).filter((element) => {
+    const id = element.dataset.flipId;
+    return id !== undefined && previousSharedIds.has(id);
+  });
   if (sharedTargets.length === 0) return animateLocalChange(mount, newElement);
 
-  const layers = motionLayers(newElement).filter((element) => {
-    if (element.hasAttribute("data-flip-id")) return false;
-    if (spec.type === "grid" && element.hasAttribute("data-current-record")) return false;
-    return true;
+  // Keep the destination in its final document flow from the first frame.
+  // A temporary shield hides every non-shared element while matching shared
+  // targets animate above it. Once Flip has restored their final transforms,
+  // fading the shield reveals an already-settled layout with no reflow jump.
+  const wasInert = newElement.inert;
+  const shield = createRevealShield(mount);
+  const restoreOverflow = exposeSharedOverflow(sharedTargets, newElement);
+  newElement.inert = true;
+  gsap.set(sharedTargets, {
+    position: "relative",
+    zIndex: 3,
+    willChange: "transform",
   });
 
   const timeline = Flip.from(state, {
     targets: sharedTargets,
-    absolute: true,
+    absolute: false,
     nested: true,
     scale: true,
     fade: false,
@@ -154,31 +232,22 @@ function animateSharedLayout(
     paused: true,
   });
 
-  const direction = spec.direction === "in" ? 1 : -1;
-
-  if (layers.length > 0) {
-    timeline.fromTo(
-      layers,
-      {
-        y: direction * transitionMotion.layerOffset,
-        scale: spec.type === "grid" ? 0.985 : 0.995,
-        transformOrigin: "50% 50%",
-      },
-      {
-        y: 0,
-        scale: 1,
-        duration: motionDurations.settle,
-        ease: motionEases.settle,
-        stagger: 0.035,
-      },
-      0.04,
-    );
-  }
+  timeline.to(
+    shield,
+    {
+      autoAlpha: 0,
+      duration: motionDurations.local,
+      ease: motionEases.state,
+    },
+    ">",
+  );
 
   timeline.play();
   return trackTransition(timeline, mount, () => {
+    shield.remove();
+    restoreOverflow();
+    newElement.inert = wasInert;
     clearMany(sharedTargets);
-    clearMany(layers);
   });
 }
 
@@ -300,6 +369,7 @@ export function commit(
   const mountRect = mount.getBoundingClientRect();
   const shouldFlip = spec.type === "expand" || spec.type === "grid";
   const oldShared = oldElement === null ? [] : sharedElements(oldElement);
+  const oldSharedIds = sharedElementIds(oldShared);
 
   if (oldElement !== null) gsap.killTweensOf(oldElement);
   const flipState = shouldFlip && oldShared.length > 0
@@ -316,7 +386,7 @@ export function commit(
   if (spec.type === "expand" || spec.type === "grid") {
     return flipState === null
       ? animateLocalChange(mount, newElement)
-      : animateSharedLayout(mount, newElement, flipState, spec);
+      : animateSharedLayout(mount, newElement, flipState, oldSharedIds);
   }
 
   if (spec.type === "fade") {
