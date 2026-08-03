@@ -13,28 +13,26 @@
  *   4. Subscribe to store changes: on every mutation, debounce-save
  *      and re-render the app.
  *
- * Re-entry on `astro:page-load`: the same `init` runs again after a
- * teardown that disposes the previous instance's listeners and gesture
- * bindings — so the app re-attaches cleanly after any future Astro
- * navigation. (The shell itself never navigates — it's a single page —
- * but the hook is the right one to use so future Astro client-side
- * routing still works.)
- *
- * Important: the store subscriber performs a PLAIN DOM update
- * (`updateDOM`). It does NOT wrap that update in another `commit` call.
- * Every state-changing call site that wants a specific view transition
- * wraps its `setState` in `commit(...)` itself; the resulting
- * `setState` → subscriber → `updateDOM` chain runs inside that
- * callback, so the DOM swap is captured by `startViewTransition` exactly
- * once. Nesting `commit` calls (outer + inner view transition) is not
- * supported by the View Transitions API — the inner one would either
- * throw or queue behind the outer one, producing a perceptible lag.
+ * The shell is a single-page application. State-changing actions run through
+ * the GSAP motion controller, while the store subscriber performs the plain
+ * DOM render inside that synchronous mutation.
  */
 
-import { flushSave, getSeedData, loadState, normalize, saveState } from "./persistence";
-import { animateHero } from "./countup";
+import { flushSave, loadState, normalize, saveState } from "./persistence";
 import { attachGestures, attachRowSwipe, type GestureHandlers } from "./gestures";
-import { commit, isNewBest, latestEntry, makeEntry, makeRecord, sortEntries } from "./motion";
+import {
+  animateInitialView,
+  celebrate,
+  commit,
+  disposeMotion,
+} from "./motion";
+import {
+  isNewBest,
+  latestEntry,
+  makeEntry,
+  makeRecord,
+  sortEntries,
+} from "./record-utils";
 import {
   armDeleteConfirm,
   consumeDeleteConfirm,
@@ -52,18 +50,6 @@ const APP_ID = "app";
  * State helpers
  * ------------------------------------------------------------------------- */
 
-/**
- * Tracks the last-rendered record id so we know when to re-run the
- * hero count-up animation. The count-up is a "scoreboard" effect and
- * should ONLY fire when the user changes record (swipe up/down, pick
- * from grid). It must NOT fire on in-place re-renders like adding an
- * entry, toggling edit mode, or the delete-confirm label flip.
- * A sentinel of `null` means "first render ever" — always animate.
- */
-let lastRenderedRecordId: string | null | undefined = undefined;
-/** Tracks the last-rendered hero value (number) for the same reason. */
-let lastRenderedHeroValue: number | undefined = undefined;
-
 function currentRecord(state: AppState): Record | null {
   if (state.currentRecordId === null) return null;
   return state.records.find((r) => r.id === state.currentRecordId) ?? null;
@@ -78,16 +64,14 @@ function currentIndex(state: AppState): number {
  *
  * Two helpers, used in different places:
  *
- *   - `updateDOM()` is the plain DOM swap. It runs INSIDE a `commit(...)`
- *     callback from the caller, so `startViewTransition` snapshots the
- *     new DOM after it has been swapped in. This is what every
- *     state-changing code path (gesture handlers, form submits, button
- *     clicks) ends up calling via the store subscriber.
+ *   - `updateDOM()` is the plain DOM swap. It runs inside the state mutation
+ *     passed to `commit(...)`, allowing the motion controller to retain the
+ *     previous node as an exit overlay.
  *
  *   - `rerender()` is the "default fade" wrapper — use it for the one
  *     case where the UI must re-render without a corresponding state
  *     change (the delete-record two-tap label flip). It commits the
- *     DOM swap with the generic "fade" transition name.
+ *     DOM swap with the generic fade transition.
  * ------------------------------------------------------------------------- */
 
 function updateDOM(): void {
@@ -96,40 +80,10 @@ function updateDOM(): void {
   const fresh = renderApp(getState());
   mount.replaceChildren(fresh);
   wire(mount);
-
-  // Animate the hero value count-up ONLY when the current record or its
-  // latest value changed. The count-up is a "scoreboard" effect that
-  // should fire on swipe between records, on initial render, and when
-  // the latest entry value changes (e.g. adding a new entry to the
-  // currently-focused record). It must NOT fire on in-place re-renders
-  // like toggling edit mode, opening/closing the inline add-entry form,
-  // or the delete-confirm label flip.
-  const state = getState();
-  const record = state.records.find((r) => r.id === state.currentRecordId);
-  const latest = record === undefined ? null : latestEntry(record);
-  if (latest !== null) {
-    const latestValue = latest.value;
-    const recordChanged = lastRenderedRecordId !== state.currentRecordId;
-    const valueChanged = lastRenderedHeroValue !== latestValue;
-    const isFirstRender = lastRenderedRecordId === undefined;
-    if (isFirstRender || recordChanged || valueChanged) {
-      const hero = document.getElementById("hero-value");
-      if (hero !== null) {
-        hero.textContent = "0";
-        void animateHero(hero, latestValue, record?.unit ?? "");
-      }
-    }
-    lastRenderedRecordId = state.currentRecordId;
-    lastRenderedHeroValue = latestValue;
-  } else {
-    // No record to animate — keep the trackers in sync.
-    lastRenderedRecordId = state.currentRecordId;
-    lastRenderedHeroValue = undefined;
-  }
 }
 
 function rerender(): void {
-  commit(() => updateDOM(), "fade");
+  void commit(() => updateDOM(), { type: "fade" });
 }
 
 /* ---------------------------------------------------------------------------
@@ -172,12 +126,6 @@ function wire(root: HTMLElement): void {
     deleteBtn.addEventListener("click", onDeleteRecordClick);
   }
 
-  // Grid cell taps
-  const cells = root.querySelectorAll<HTMLButtonElement>(`button[${VIEW_ATTRS.recordId}]`);
-  cells.forEach((cell) => {
-    cell.addEventListener("click", onGridCellClick);
-  });
-
   // Entry rows: swipe-to-delete + tap-to-edit
   const rows = root.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`);
   rows.forEach((row) => {
@@ -196,6 +144,14 @@ function wire(root: HTMLElement): void {
         new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
       );
     });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (row.querySelector(`[${VIEW_ATTRS.entryEditForm}]`) !== null) return;
+      event.preventDefault();
+      document.dispatchEvent(
+        new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
+      );
+    });
   });
 
   // Edit entry form: submit → onEditEntrySubmit, cancel → clear + rerender
@@ -209,24 +165,6 @@ function wire(root: HTMLElement): void {
     form.addEventListener("keydown", onEditFormKeyDown as EventListener);
   });
 
-  const cancelEditButtons = root.querySelectorAll<HTMLButtonElement>(
-    `[${VIEW_ATTRS.cancelEdit}]`,
-  );
-  cancelEditButtons.forEach((btn) => {
-    btn.addEventListener("click", onCancelEditClick);
-  });
-
-  // "LOAD EXAMPLES" button (empty state → populate with seed data)
-  const loadExamplesBtn = root.querySelector<HTMLButtonElement>('[data-action="load-examples"]');
-  if (loadExamplesBtn !== null) {
-    loadExamplesBtn.addEventListener("click", loadExamples);
-  }
-
-  // "CANCEL" button in the new-record form (close form, return to focus)
-  const closeNewBtn = root.querySelector<HTMLButtonElement>('[data-action="close-new"]');
-  if (closeNewBtn !== null) {
-    closeNewBtn.addEventListener("click", () => closeNewRecord());
-  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -243,6 +181,7 @@ function setActivePill(buttons: NodeListOf<HTMLButtonElement>, active: HTMLButto
     const isActive = b === active;
     for (const cls of ACTIVE) b.classList.toggle(cls, isActive);
     for (const cls of INACTIVE) b.classList.toggle(cls, !isActive);
+    b.setAttribute("aria-pressed", String(isActive));
   });
 }
 
@@ -305,7 +244,7 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   const firstEntry: Entry = makeEntry(value, date);
   const record: Record = makeRecord(name, unit, firstEntry, direction);
   // New records go to the front (most recently created at index 0).
-  commit(() => {
+  void commit(() => {
     setState((prev) => ({
       records: [record, ...prev.records],
       currentRecordId: record.id,
@@ -313,7 +252,7 @@ function onNewRecordSubmit(e: SubmitEvent): void {
       expanded: false,
       addingEntry: false,
     }));
-  }, "nav-vertical");
+  }, { type: "panel", direction: "out" });
 }
 
 function onAddEntrySubmit(e: SubmitEvent): void {
@@ -330,7 +269,7 @@ function onAddEntrySubmit(e: SubmitEvent): void {
   // state update (for the PR-pulse check below).
   const newEntry: Entry = makeEntry(value, date);
 
-  commit(() => {
+  const transition = commit(() => {
     setState((prev) => {
       const record = currentRecord(prev);
       if (record === null) return prev;
@@ -341,7 +280,7 @@ function onAddEntrySubmit(e: SubmitEvent): void {
         addingEntry: false,
       };
     });
-  }, "fade");
+  }, { type: "fade" });
 
   // PR pulse: if the new entry (now the latest, because it has today's
   // date in 99% of cases, and sortEntries puts it there regardless)
@@ -353,7 +292,9 @@ function onAddEntrySubmit(e: SubmitEvent): void {
     const newLatest = latestEntry(updatedRecord);
     if (newLatest !== null && newLatest.id === newEntry.id) {
       if (isNewBest(updatedRecord, newEntry.id, value)) {
-        document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+        void transition.then(() => {
+          document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+        });
       }
     }
   }
@@ -388,7 +329,7 @@ function onEditEntrySubmit(e: SubmitEvent): void {
   // the read-only row (not the form).
   setEditingEntryId(null);
 
-  commit(() => {
+  const transition = commit(() => {
     setState((prev) => {
       const r = currentRecord(prev);
       if (r === null) return prev;
@@ -398,7 +339,7 @@ function onEditEntrySubmit(e: SubmitEvent): void {
       const updated: Record = { ...r, entries: sortEntries(updatedEntries) };
       return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
     });
-  }, "fade");
+  }, { type: "fade" });
 
   // PR pulse on edit: only when the edited entry IS the latest after
   // the state update (which can change if the user re-dated an older
@@ -410,20 +351,13 @@ function onEditEntrySubmit(e: SubmitEvent): void {
       const newLatest = latestEntry(updated);
       if (newLatest !== null && newLatest.id === entryId) {
         if (isNewBest(updated, entryId, value)) {
-          document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+          void transition.then(() => {
+            document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+          });
         }
       }
     }
   }
-}
-
-function onCancelEditClick(_e: MouseEvent): void {
-  // Clear the local edit state and trigger a re-render so the row
-  // flips back to read-only. Uses `rec-ord:rerender` (not `commit`
-  // directly) for consistency with the delete-confirm timeout — no
-  // underlying store change, just ephemeral UI state reverting.
-  setEditingEntryId(null);
-  document.dispatchEvent(new CustomEvent("rec-ord:rerender"));
 }
 
 function onEditFormKeyDown(e: KeyboardEvent): void {
@@ -437,13 +371,17 @@ function onEditFormKeyDown(e: KeyboardEvent): void {
 }
 
 function onNewEntryToggleClick(): void {
-  // The toggle button doubles as the form's cancel control: when the
-  // inline form is open, its label is "CANCEL" and tapping it closes
-  // the form (keeping the edit expansion). When the form is closed,
-  // the label is "+ NEW ENTRY" and tapping it opens the form.
-  commit(() => {
-    setState((prev) => ({ addingEntry: !prev.addingEntry }));
-  }, "fade");
+  // Opening is an explicit transactional action. Closing is gestural:
+  // swipe down once to dismiss the composer, then again to collapse edit.
+  const opening = true;
+  void commit(() => {
+    setState({ addingEntry: opening });
+  }, { type: "fade" }).then(() => {
+    if (!opening) return;
+    document.querySelector<HTMLInputElement>(
+      `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+    )?.focus({ preventScroll: true });
+  });
 }
 
 function onDeleteRecordClick(e: MouseEvent): void {
@@ -475,7 +413,7 @@ function performDeleteRecord(): void {
 
   // If it's the only record, the empty state is the destination.
   if (state.records.length === 1) {
-    commit(() => {
+    void commit(() => {
       setState({
         records: [],
         currentRecordId: null,
@@ -483,7 +421,7 @@ function performDeleteRecord(): void {
         expanded: false,
         addingEntry: false,
       });
-    }, "nav-vertical");
+    }, { type: "record", direction: "up" });
     return;
   }
 
@@ -492,7 +430,8 @@ function performDeleteRecord(): void {
   const idx = currentIndex(state);
   const neighbor = state.records[idx - 1] ?? state.records[idx + 1] ?? null;
 
-  commit(() => {
+  const direction = neighbor === state.records[idx - 1] ? "down" : "up";
+  void commit(() => {
     setState({
       records: state.records.filter((r) => r.id !== record.id),
       currentRecordId: neighbor ? neighbor.id : null,
@@ -500,21 +439,7 @@ function performDeleteRecord(): void {
       expanded: false,
       addingEntry: false,
     });
-  }, "nav-vertical");
-}
-
-function onGridCellClick(e: MouseEvent): void {
-  const cell = e.currentTarget as HTMLButtonElement;
-  const recordId = cell.getAttribute(VIEW_ATTRS.recordId);
-  if (recordId === null) return;
-  commit(() => {
-    setState({
-      currentRecordId: recordId,
-      view: "focus",
-      expanded: false,
-      addingEntry: false,
-    });
-  }, "scale-morph");
+  }, { type: "record", direction });
 }
 
 function deleteEntry(entryId: string): void {
@@ -527,14 +452,14 @@ function deleteEntry(entryId: string): void {
     performDeleteRecord();
     return;
   }
-  commit(() => {
+  void commit(() => {
     setState((prev) => {
       const r = currentRecord(prev);
       if (r === null) return prev;
       const updated: Record = { ...r, entries: r.entries.filter((e) => e.id !== entryId) };
       return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
     });
-  }, "fade");
+  }, { type: "fade" });
 }
 
 /* ---------------------------------------------------------------------------
@@ -553,9 +478,9 @@ function goToNextRecord(velocity?: number): boolean {
   const idx = currentIndex(state);
   const next = state.records[idx + 1];
   if (!next) return false; // last/oldest — spring back
-  commit(() => {
+  void commit(() => {
     setState({ currentRecordId: next.id });
-  }, "nav-vertical", undefined, velocity);
+  }, { type: "record", direction: "up", velocity });
   return true;
 }
 
@@ -565,24 +490,25 @@ function goToPreviousRecord(velocity?: number): boolean {
   if (state.expanded && state.addingEntry) {
     // Swipe-down on the inline form: cancel the form, keep the
     // edit expansion. The user can swipe again to fully collapse.
-    commit(() => {
+    void commit(() => {
       setState({ addingEntry: false });
-    }, "fade");
+    }, { type: "fade" });
     return true;
   }
   if (state.expanded) {
     // Collapse edit.
-    commit(() => {
+    setEditingEntryId(null);
+    void commit(() => {
       setState({ expanded: false, addingEntry: false });
-    }, "collapse");
+    }, { type: "expand", direction: "out" });
     return true;
   }
   const idx = currentIndex(state);
   const prev = state.records[idx - 1];
   if (!prev) return false; // first/newest — spring back
-  commit(() => {
+  void commit(() => {
     setState({ currentRecordId: prev.id });
-  }, "nav-vertical", undefined, velocity);
+  }, { type: "record", direction: "down", velocity });
   return true;
 }
 
@@ -592,18 +518,18 @@ function openNewRecord(velocity?: number): boolean {
   // user is in "edit mode" — horizontal swipes are intentionally blocked
   // by the gesture handler so the only way out is swipe-down.
   if (state.view !== "focus" || state.expanded) return false;
-  commit(() => {
+  void commit(() => {
     setState({ view: "new" });
-  }, "push-horizontal-in", undefined, velocity);
+  }, { type: "panel", direction: "in", velocity });
   return true;
 }
 
 function closeNewRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "new") return false;
-  commit(() => {
+  void commit(() => {
     setState({ view: "focus" });
-  }, "push-horizontal-out", undefined, velocity);
+  }, { type: "panel", direction: "out", velocity });
   return true;
 }
 
@@ -611,27 +537,28 @@ function toggleEdit(): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded) return false;
   if (state.records.length === 0) return false;
-  commit(() => {
+  void commit(() => {
     setState({ expanded: true });
-  }, "expand");
+  }, { type: "expand", direction: "in" });
   return true;
 }
 
 function collapseEdit(): boolean {
   const state = getState();
   if (!state.expanded) return false;
-  commit(() => {
+  setEditingEntryId(null);
+  void commit(() => {
     setState({ expanded: false, addingEntry: false });
-  }, "collapse");
+  }, { type: "expand", direction: "out" });
   return true;
 }
 
 function openGrid(): boolean {
   const state = getState();
-  if (state.view !== "focus" || state.records.length === 0) return false;
-  commit(() => {
+  if (state.view !== "focus" || state.expanded || state.records.length === 0) return false;
+  void commit(() => {
     setState({ view: "grid" });
-  }, "scale-morph");
+  }, { type: "grid", direction: "out" });
   return true;
 }
 
@@ -641,14 +568,14 @@ function closeGrid(centroid?: { x: number; y: number }): boolean {
   // Try to focus the cell under the pinch centroid. If none, just
   // return to the current focus.
   const target = centroid ? findRecordIdAt(state, centroid) : null;
-  commit(() => {
+  void commit(() => {
     setState({
       view: "focus",
       currentRecordId: target ?? state.currentRecordId,
       expanded: false,
       addingEntry: false,
     });
-  }, "scale-morph");
+  }, { type: "grid", direction: "in" });
   return true;
 }
 
@@ -675,23 +602,6 @@ const gestureHandlers: GestureHandlers = {
   onPinchOut: () => openGrid(),
   onPinchIn: (c) => closeGrid(c),
 };
-
-/* ---------------------------------------------------------------------------
- * Seed loader (used by the "LOAD EXAMPLES" button in the empty state)
- * ------------------------------------------------------------------------- */
-
-function loadExamples(): void {
-  const seed = getSeedData();
-  commit(() => {
-    setState({
-      records: seed.records,
-      currentRecordId: seed.currentRecordId,
-      view: "focus",
-      expanded: false,
-      addingEntry: false,
-    });
-  }, "fade");
-}
 
 /* ---------------------------------------------------------------------------
  * Keyboard shortcuts (desktop parity)
@@ -780,6 +690,7 @@ let cleanups: Array<() => void> = [];
 
 /** Dispose of every listener/handler from a previous `init()` run. */
 function teardown(): void {
+  disposeMotion();
   if (gestureCleanup !== null) {
     try {
       gestureCleanup();
@@ -799,15 +710,9 @@ function teardown(): void {
 }
 
 function init(): void {
-  // Always dispose the previous instance first — guards against
-  // double-subscription if `astro:page-load` fires more than once
-  // (e.g. dev-mode HMR, future client-side routing).
+  // Always dispose a previous instance first (dev-mode HMR can re-run the
+  // module without a full browser navigation).
   teardown();
-
-  // Reset the count-up trackers so the first render after init counts
-  // from 0 (it's a "first render" scenario).
-  lastRenderedRecordId = undefined;
-  lastRenderedHeroValue = undefined;
 
   // Load persisted data.
   const loaded = normalize(loadState());
@@ -829,8 +734,10 @@ function init(): void {
     console.error("[rec-ord] #app mount element not found");
     return;
   }
-  mount.replaceChildren(renderApp(initial));
+  const initialView = renderApp(initial);
+  mount.replaceChildren(initialView);
   wire(mount);
+  animateInitialView(initialView);
 
   // Attach gestures to `document.body` (NOT `#app`) so pointer events
   // fired on the `<main>` padding around the card — the top, bottom and
@@ -863,12 +770,8 @@ function init(): void {
   document.addEventListener("keydown", onKeyDown);
   cleanups.push(() => document.removeEventListener("keydown", onKeyDown));
 
-  // Subscribe: persist + plain DOM update on every state change. The
-  // DOM update is intentionally NOT wrapped in a `commit` here — every
-  // state-changing call site already wraps `setState` in `commit` (with
-  // the appropriate transition name), and the subscriber's plain update
-  // runs inside that callback, so the browser snapshots the swap
-  // exactly once.
+  // Persist + perform the plain DOM update on every state change. View
+  // actions wrap their mutation in `commit`, which owns the animation.
   const unsub = subscribe((state) => {
     saveState(state.records, state.currentRecordId);
     updateDOM();
@@ -898,24 +801,12 @@ function init(): void {
   document.addEventListener("rec-ord:edit-entry", onEditEntry);
   cleanups.push(() => document.removeEventListener("rec-ord:edit-entry", onEditEntry));
 
-  // "Nuevo récord" glow pulse: when an entry is added or edited such
-  // that it strictly beats the record's previous best, the handler
-  // (onAddEntrySubmit / onEditEntrySubmit) dispatches this event. The
-  // listener flashes the hero with the `.pr-pulse` class for ~0.7s.
-  // The forced reflow + class re-add pattern lets the animation replay
-  // even if two pulses fire back-to-back. No-op when the user is not
-  // on the focus view (no `[data-focus-card]` in the DOM).
+  // New personal best feedback is owned by GSAP, so repeated events can
+  // overwrite the previous tween without forcing synchronous layout.
   const onPrPulse = (): void => {
     const hero = document.querySelector<HTMLElement>("[data-focus-card] h1");
     if (hero === null) return;
-    hero.classList.remove("pr-pulse");
-    // Force a reflow so the animation can replay if it fires twice in a row.
-    void hero.offsetWidth;
-    hero.classList.add("pr-pulse");
-    // 750ms gives the 0.7s animation a 50ms grace window before
-    // the class is removed (so the `100%` keyframe state is held
-    // briefly before the class is gone).
-    window.setTimeout(() => hero.classList.remove("pr-pulse"), 750);
+    celebrate(hero);
   };
   document.addEventListener("rec-ord:pr-pulse", onPrPulse);
   cleanups.push(() => document.removeEventListener("rec-ord:pr-pulse", onPrPulse));
@@ -928,12 +819,10 @@ function init(): void {
   cleanups.push(() => window.removeEventListener("pagehide", onPageHide));
 }
 
-// Run init on first load AND on every Astro page-load event (so the app
-// re-attaches correctly if the user ever navigates between Astro pages
-// — currently never, but the hook is the right one).
+// The application has a single route and does not install Astro's client
+// router, so normal document readiness is the only lifecycle required.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init, { once: true });
 } else {
   init();
 }
-document.addEventListener("astro:page-load", init);

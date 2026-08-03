@@ -3,13 +3,11 @@
  *
  * Pure functions: each renderer takes the current `AppState` and returns a
  * fresh `HTMLElement` representing the current view. The app module is
- * responsible for swapping the rendered element into `#app` (inside a view
- * transition) and for attaching interaction listeners to it.
+ * responsible for swapping the rendered element into `#app` and attaching
+ * interaction listeners to it.
  *
- * Renderers use `document.createElement` for the main structure so that
- * the `view-transition-name` style can be applied at creation (this is
- * what allows the browser to pair the old and new elements during a
- * transition). No framework, no template strings for the main shapes.
+ * Renderers use `document.createElement` for predictable, framework-free DOM
+ * output. Motion is applied by the GSAP controller after rendering.
  *
  * Every interactive element is a real `<button>` or `<input>`/`<form>`
  * with proper `name`/`type`/`required` and `aria-label`s — keyboard
@@ -24,21 +22,7 @@ import {
   latestEntry,
   previousEntry,
   todayISO,
-} from "./motion";
-
-/* ---------------------------------------------------------------------------
- * View-transition name constants
- *
- * These are paired across the old and new renders. The browser uses them
- * to identify which "old" pseudo-element maps to which "new" pseudo-element
- * so the corresponding elements can be crossfaded (the default animation
- * for named groups). This is what makes the hero number "turn into" the
- * new number, and the focus card container "grow" into the expanded form.
- * ------------------------------------------------------------------------- */
-
-const VT_HERO = "hero";
-const VT_RECORD_CARD = "record-card";
-const VT_NEW_RECORD = "new-record";
+} from "./record-utils";
 
 /* ---------------------------------------------------------------------------
  * Local UI state (not persisted)
@@ -152,12 +136,9 @@ export function renderApp(state: AppState): HTMLElement {
     }
   }
 
-  if (state.records.length === 0) {
-    return renderEmpty();
-  }
-
   const view: View = state.view;
   if (view === "new") return renderNewRecord();
+  if (state.records.length === 0) return renderEmpty();
   if (view === "grid") return renderGrid(state);
   // view === "focus"
   return state.expanded ? renderFocusExpanded(state) : renderFocus(state);
@@ -309,37 +290,27 @@ export function renderSparkline(
 
 function renderEmpty(): HTMLElement {
   const section = document.createElement("section");
-  section.className =
-    "w-full max-w-7xl flex flex-col items-center gap-8";
-  // The empty state doesn't have a view-transition-name; the default root
-  // crossfade applies for the focus → empty transition.
+  section.className = "empty-state";
+  section.dataset.focusCard = "true";
 
-  // Primary hint: swipe right to add.
-  const hintGroup = document.createElement("div");
-  hintGroup.className = "flex items-center gap-4";
-  const bar = document.createElement("span");
-  bar.className = "block w-0.5 h-5 bg-accent";
-  bar.setAttribute("aria-hidden", "true");
-  const label = document.createElement("p");
-  label.className =
-    "font-body font-semibold text-xs tracking-[0.2em] uppercase text-ink-muted";
-  label.textContent = "SWIPE → TO ADD YOUR FIRST RECORD";
-  hintGroup.append(bar, label);
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "SWIPE RIGHT TO CREATE";
 
-  // Thin divider.
-  const divider = document.createElement("span");
-  divider.className = "block w-12 h-px bg-line";
-  divider.setAttribute("aria-hidden", "true");
+  const title = document.createElement("h1");
+  title.className = "empty-state__title";
+  title.textContent = "Track the progress that matters.";
 
-  // Secondary action: load a set of example records to see the app populated.
-  const button = document.createElement("button");
-  button.type = "button";
-  button.setAttribute("data-action", "load-examples");
-  button.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase text-ink-muted opacity-50 hover:opacity-100 hover:text-accent transition-all duration-200 cursor-pointer";
-  button.textContent = "LOAD EXAMPLES";
+  const description = document.createElement("p");
+  description.className = "empty-state__description";
+  description.textContent =
+    "Create a record, add entries over time, and see your direction at a glance.";
 
-  section.append(hintGroup, divider, button);
+  const gestureHint = document.createElement("p");
+  gestureHint.className = "gesture-note";
+  gestureHint.textContent = "Your data stays private on this device.";
+
+  section.append(eyebrow, title, description, gestureHint);
   return section;
 }
 
@@ -352,6 +323,13 @@ function findCurrentRecord(state: AppState): Record | null {
   return state.records.find((r) => r.id === state.currentRecordId) ?? null;
 }
 
+function formatValueWithUnit(value: number, unit: string): string {
+  const normalizedUnit = unit.trim().toUpperCase();
+  const formatted = formatValueForUnit(value, normalizedUnit);
+  const includesUnit = normalizedUnit === "HRS" || normalizedUnit === "MIN" || normalizedUnit === "SEC";
+  return includesUnit ? formatted : `${formatted} ${normalizedUnit}`;
+}
+
 function renderFocus(state: AppState): HTMLElement {
   const record = findCurrentRecord(state);
   if (record === null) {
@@ -361,76 +339,21 @@ function renderFocus(state: AppState): HTMLElement {
   const latest = latestEntry(record);
   if (latest === null) return renderEmpty();
 
-  // The section is THE focus card for view-transition purposes. The
-  // expanded view's section is a different element with the same
-  // `view-transition-name: record-card`, so the browser pairs them on
-  // long-press / collapse and morphs the height/content. The section is
-  // `position: relative` so the ::after pseudo-element (swipe progress
-  // bar, styled in motion.css) can anchor to its bottom edge.
-  // `h-full` lets the inner `flex-1 justify-end` push the card content
-  // to the bottom of the screen (Apple Music "now playing" feel).
-  // Without `h-full` on the section + `flex-1` on the inner, the
-  // section collapses to its content height and `justify-end` is a no-op
-  // (content shows at the top instead of the bottom).
   const section = document.createElement("section");
-  section.className =
-    "relative w-full max-w-7xl h-full flex flex-col items-start gap-6 px-4 sm:px-8";
+  section.className = "focus-view app-view";
   section.dataset.focusCard = "true";
-  section.style.viewTransitionName = VT_RECORD_CARD;
-
-  // Current card content (context label + hero + stats, when applicable).
   section.append(renderFocusInner(record, latest, false));
 
   return section;
 }
 
 function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTMLElement {
-  // Full card content: context + sparkline + hero + stats. The wrapper
-  // section (collapsed focus and expanded focus) adds `data-focus-card`
-  // and the shared `view-transition-name: record-card`, so the browser
-  // pairs the two on long-press / collapse and morphs the height/content.
-  //
-  // Layout depends on `expanded`:
-  //   - Collapsed: a top area (context + trend + sparkline) at the top
-  //     of the screen and a bottom area (hero + stats) at the bottom.
-  //     The inner is `flex flex-col h-full w-full flex-1` and a flex-1
-  //     spacer between the two areas pushes the bottom area to the
-  //     bottom edge — the "Apple Music now playing" feel, but with the
-  //     empty top margin now occupied by dashboard-style metrics.
-  //   - Expanded: top-center aligned (`items-center justify-start pt-4`).
-  //     The content centers horizontally and sits at the top of the
-  //     screen, with the history + form below it (also centered). No
-  //     sparkline, no trend indicator — the per-entry history list
-  //     below provides the detail.
-  //
-  // View-transition-name: we tag the inner with `card-head` ONLY when
-  // collapsed. On expand, the old (collapsed, named) element fades out
-  // and the new (expanded, unnamed) element appears — the outer section
-  // `record-card` morph handles the overall height/position change, and
-  // the card-head fade provides a clean visual transition for the card
-  // content itself. On collapse, the new (collapsed, named) element
-  // fades in, paired with the outer section's record-card morph. We
-  // intentionally DON'T keep the name on the expanded inner: if we did,
-  // the browser would try to pair a collapsed card-head with an
-  // expanded one on collapse, producing a confusing layout morph.
-  //
-  // The new sparkline + trend indicator only exist in the collapsed
-  // view. The browser handles their entrance/exit via the unnamed-
-  // element crossfade (the default `expand`/`collapse` animation in
-  // motion.css): when going to expanded, they fade out; when coming
-  // back to collapsed, they fade in.
+  // Collapsed mode distributes overview data across the available height.
+  // Expanded mode keeps a compact summary above the independently scrollable
+  // entry history and forms.
   const inner = document.createElement("div");
   if (expanded) {
-    inner.className =
-      // `flex-1` REMOVED: with two `flex-1` siblings (inner + expandedWrap)
-      // each took 50% of the section, leaving the expandedWrap with
-      // only half the viewport for the history + add-entry + delete.
-      // When the history was long, the content overflowed the 50%
-      // space and the add-entry button ended up below the visible
-      // area. Now the inner takes its natural height (hero + stats)
-      // and the expandedWrap is the SOLE `flex-1` sibling, filling
-      // all remaining space and scrolling properly.
-      "flex flex-col items-center justify-start gap-8 w-full pt-4";
+    inner.className = "record-summary record-summary--expanded";
   } else {
     // The inner fills the section's height (the section is `h-full`
     // and inner is the only child with `flex-1` in a flex column).
@@ -440,8 +363,7 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
     // (`justify-end` is not used here — the spacer is the mechanism,
     // and it cooperates with the `gap-8` to keep the top and bottom
     // areas at least 32px apart.)
-    inner.className = "flex flex-col h-full w-full gap-8 flex-1";
-    inner.style.viewTransitionName = "card-head";
+    inner.className = "record-summary";
   }
 
   if (expanded) {
@@ -449,7 +371,7 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
     // hero (only when there is a baseline entry — the expanded
     // history list already provides the per-entry detail). No
     // trend indicator and no sparkline here.
-    inner.append(renderHero(record, latest));
+    inner.append(renderHero(record, latest, true));
     const prev = previousEntry(record);
     if (prev !== null) inner.append(renderStats(record, latest, prev));
   } else {
@@ -462,6 +384,7 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
 
     const top = document.createElement("div");
     top.className = "flex flex-col gap-4 w-full";
+    top.dataset.motionLayer = "context";
 
     // Row 1: context label (left) + trend indicator (right),
     // justified across the full width.
@@ -501,7 +424,8 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
     // top area's metrics.
     const bottom = document.createElement("div");
     bottom.className = "flex flex-col items-start gap-6 w-full";
-    bottom.append(renderHero(record, latest));
+    bottom.dataset.motionLayer = "hero";
+    bottom.append(renderHero(record, latest, false));
     bottom.append(renderStats(record, latest, prev));
     inner.append(bottom);
   }
@@ -514,13 +438,14 @@ function renderContextLabel(record: Record): HTMLElement {
   context.className = "flex items-center gap-4";
 
   const bar = document.createElement("span");
-  bar.className = "block w-0.5 h-5 bg-accent";
+  bar.className = "block w-2 h-2 rounded-full bg-accent shadow-[0_0_18px_rgba(244,201,93,0.42)]";
   bar.setAttribute("aria-hidden", "true");
 
   const label = document.createElement("p");
   label.className =
     "font-body font-semibold text-xs tracking-[0.2em] uppercase text-ink-muted";
   label.textContent = record.name.toUpperCase();
+  label.dataset.flipId = `record-label-${record.id}`;
 
   context.append(bar, label);
   return context;
@@ -590,7 +515,7 @@ function renderTrendIndicator(
   return el;
 }
 
-function renderHero(record: Record, latest: Entry): HTMLElement {
+function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElement {
   // Hero: the DOMINANT visual element. The value is huge, left-aligned,
   // and the first thing the eye sees. The unit sits below as a secondary
   // label. The direction indicator (if any) is a small badge.
@@ -615,8 +540,9 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
   // wrap. Without it, the wrapper is constrained by the row, and the
   // h1 wraps when the value is too wide.
   heroWrap.className =
-    "relative flex flex-col items-start justify-end text-left max-w-full min-w-0";
-  heroWrap.style.viewTransitionName = VT_HERO;
+    `hero-value-wrap ${compact ? "hero-value-wrap--compact" : ""}`;
+  heroWrap.dataset.flipId = `hero-${record.id}`;
+  if (compact) heroWrap.dataset.motionLayer = "hero";
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
   // Rendered first in DOM so it's positioned absolutely before the value.
@@ -630,11 +556,8 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
     heroWrap.append(dir);
   }
 
-  // Value: the big number. font-black (900) for maximum punch, tight
-  // leading and tracking. The `data-hero` attribute is the hook for the
-  // "nuevo récord" glow pulse — when an entry breaks the record's best,
-  // app.ts adds a temporary `pr-pulse` class to this element to flash
-  // a text-shadow. Without a breaking entry the element renders plain.
+  // Value: the dominant number. `data-hero` is the GSAP celebration hook
+  // when a new entry becomes a personal best.
   //
   // `overflow-hidden text-clip` REMOVED: when the value is too wide for
   // the container, the h1 WRAPS (text-wrap) instead of truncating.
@@ -652,8 +575,12 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
                      record.unit.toUpperCase().trim() === "MIN" ||
                      record.unit.toUpperCase().trim() === "SEC";
   const heroFontSize = isTimeUnit
-    ? "text-[clamp(7rem,30vw,16rem)]"
-    : "text-[clamp(12rem,52vw,28rem)]";
+    ? compact
+      ? "text-[clamp(3.75rem,18vw,6rem)]"
+      : "text-[clamp(5.5rem,24vw,11rem)]"
+    : compact
+      ? "text-[clamp(4.5rem,22vw,8rem)]"
+      : "text-[clamp(7rem,38vw,20rem)]";
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
@@ -662,8 +589,9 @@ function renderHero(record: Record, latest: Entry): HTMLElement {
 
   // Unit: displayed BELOW the value as a secondary label.
   const unit = document.createElement("div");
-  unit.className =
-    "font-body text-2xl tracking-[0.2em] uppercase text-ink-muted mt-2";
+  unit.className = compact
+    ? "font-body text-sm tracking-[0.2em] uppercase text-ink-muted mt-1"
+    : "font-body text-xl tracking-[0.2em] uppercase text-ink-muted mt-2";
   unit.textContent = record.unit;
 
   heroWrap.append(value, unit);
@@ -681,50 +609,35 @@ function renderStats(
   // compare to. The expanded view still gates on `previous !== null`
   // (the call site decides whether to render stats at all).
   const stats = document.createElement("div");
-  stats.className =
-    "flex flex-col items-start gap-8 w-full pt-8 border-t border-line " +
-    "md:flex-row md:justify-start";
+  stats.className = "stats-grid";
 
   const previousCol = document.createElement("div");
-  previousCol.className = "flex flex-col gap-1";
+  previousCol.className = "stat-item";
   const previousLabel = document.createElement("span");
-  previousLabel.className =
-    "font-body font-medium text-[0.625rem] leading-none tracking-[0.2em] " +
-    "uppercase text-ink-muted opacity-50";
+  previousLabel.className = "stat-label";
   previousLabel.textContent = "PREVIOUS";
   const previousValue = document.createElement("span");
-  previousValue.className =
-    "font-body font-medium text-xl leading-[1.1] tracking-[0.05em] " +
-    "uppercase tabular-nums text-ink";
+  previousValue.className = "stat-value";
   previousValue.textContent =
     previous !== null
-    ? `${formatValueForUnit(previous.value, record.unit)} ${record.unit}`
+    ? formatValueWithUnit(previous.value, record.unit)
     : "—";
   previousCol.append(previousLabel, previousValue);
 
-  const divider = document.createElement("span");
-  divider.className =
-    "hidden md:block w-px self-stretch min-h-12 bg-line";
-  divider.setAttribute("aria-hidden", "true");
-
   const changeCol = document.createElement("div");
-  changeCol.className = "flex flex-col gap-1";
+  changeCol.className = "stat-item";
   const changeLabel = document.createElement("span");
-  changeLabel.className =
-    "font-body font-medium text-[0.625rem] leading-none tracking-[0.2em] " +
-    "uppercase text-ink-muted opacity-50";
+  changeLabel.className = "stat-label";
   changeLabel.textContent = "CHANGE";
   const changeValue = document.createElement("span");
-  changeValue.className =
-    "font-body font-medium text-xl leading-[1.1] tracking-[0.05em] " +
-    "uppercase tabular-nums text-accent";
+  changeValue.className = "stat-value stat-value--accent";
   changeValue.textContent =
     previous !== null
       ? formatDelta(latest.value, previous.value, record.unit)
       : "—";
   changeCol.append(changeLabel, changeValue);
 
-  stats.append(previousCol, divider, changeCol);
+  stats.append(previousCol, changeCol);
   return stats;
 }
 
@@ -738,96 +651,66 @@ function renderFocusExpandedSection(
   state: AppState,
 ): HTMLElement {
   const section = document.createElement("section");
-  // The section is a flex column with a constrained height so the
-  // inner entries list can scroll independently when there are many
-  // entries. The hero, the "+ NEW ENTRY" toggle, and the delete button
-  // are pinned to the top/bottom and don't scroll.
-  section.className =
-    "w-full max-w-7xl flex flex-col items-start gap-6 px-4 sm:px-8 " +
-    "h-full max-h-[100dvh]";
+  section.className = "expanded-view app-view";
   section.dataset.focusCard = "true";
-  section.style.viewTransitionName = VT_RECORD_CARD;
 
-  section.append(renderFocusInner(record, latest, true));
+  const header = document.createElement("header");
+  header.className = "view-header";
+  header.dataset.motionLayer = "header";
+  const heading = document.createElement("div");
+  heading.className = "view-header__heading";
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "SWIPE DOWN TO CLOSE";
+  const title = document.createElement("h2");
+  title.className = "view-header__title";
+  title.textContent = record.name;
+  heading.append(eyebrow, title);
+  header.append(heading);
 
-  // --- Expanded content (entries history + add-entry form + delete) -----
-  //
-  // This wrapper is the scrollable region for the expanded view. The
-  // history can be long (dozens of entries), so it needs to scroll
-  // independently of the card content above it.
-  //
-  // Key classes for the scroll fix:
-  //   - `flex-1`        — fill the remaining vertical space in the section
-  //                       (the section is `h-full max-h-[100dvh]`)
-  //   - `min-h-0`       — CRITICAL: without this, flex children don't
-  //                       shrink below their content size, and the
-  //                       `overflow-y-auto` never triggers. The history
-  //                       would push the section past the viewport.
-  //   - `overflow-y-auto` — enables vertical scrolling when content
-  //                       exceeds the wrapper's height
-  //   - `max-w-md`      — keeps the history list readable (a 28rem
-  //                       column is the max comfortable reading width)
-  //   - `items-center`  — centers the history rows + form within the
-  //                       column (matches the centered card content
-  //                       above)
+  section.append(header, renderFocusInner(record, latest, true));
+
+  // Entry controls and history share one bounded native scroll region.
   const expandedWrap = document.createElement("div");
-  expandedWrap.className =
-    "min-h-0 overflow-y-auto w-full max-w-md flex flex-col items-center gap-6 pt-8 flex-1";
+  expandedWrap.className = "expanded-content scroll-region";
+  expandedWrap.dataset.motionLayer = "details";
 
-  // Entries history (newest first; the latest is index 0 and is the
-  // hero, so we show entries[1..] in the history. The latest is hidden
-  // because it IS the hero.) The list itself doesn't scroll — the
-  // parent `expandedWrap` is the scroll region (it has
-  // `overflow-y-auto min-h-0 flex-1`), so the whole expanded content
-  // (history + add-entry form + delete) scrolls together as one
-  // continuous region.
+  // The newest entry is already represented by the hero value.
   const list = document.createElement("ul");
-  list.className = "w-full max-w-md flex flex-col gap-1";
+  list.className = "entry-list";
 
   const history = record.entries.slice(1);
   for (const entry of history) {
     list.append(renderEntryRow(entry, record));
   }
-  expandedWrap.append(list);
 
-  // "+ NEW ENTRY" affordance or inline form
-  //
-  // The toggle button is ALWAYS visible (header of this section).
-  // When `addingEntry` is false its label is "+ NEW ENTRY" and tapping
-  // it opens the inline form. When `addingEntry` is true its label
-  // flips to "CANCEL" and tapping it closes the form (the form
-  // disappears, the edit expansion stays). This makes the spec's
-  // "Tapping the header button again cancels" instruction work.
+  // The composer stays above history so adding an entry never requires
+  // scrolling through the entire record first.
   const addWrap = document.createElement("div");
-  addWrap.className = "w-full max-w-md flex flex-col items-start gap-4 shrink-0";
-
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className =
-    "font-body text-xs tracking-[0.2em] uppercase text-accent " +
-    "hover:text-ink transition-colors";
-  toggle.textContent = state.addingEntry ? "CANCEL" : "+ NEW ENTRY";
-  toggle.dataset.newEntryToggle = "true";
-  addWrap.append(toggle);
+  addWrap.className = "entry-composer";
 
   if (state.addingEntry) {
     addWrap.append(renderInlineAddEntryForm(record));
+  } else {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "button button--primary button--compact";
+    toggle.textContent = "ADD ENTRY";
+    toggle.dataset.newEntryToggle = "true";
+    addWrap.append(toggle);
   }
-  expandedWrap.append(addWrap);
+  expandedWrap.append(addWrap, list);
 
   // DELETE RECORD (two-tap)
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   const inConfirm = isDeleteConfirmArmed(record.id);
   deleteBtn.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
-    "text-ink-muted/50 hover:text-ink-muted transition-colors shrink-0";
+    "button button--danger button--compact";
   if (inConfirm) {
-    // Subtle visual difference to indicate the "armed" state.
-    deleteBtn.classList.remove("text-ink-muted/50");
-    deleteBtn.classList.add("text-ink-muted");
+    deleteBtn.classList.add("button--danger-confirm");
   }
-  deleteBtn.textContent = inConfirm ? "TAP TO CONFIRM" : "DELETE RECORD";
+  deleteBtn.textContent = inConfirm ? "CONFIRM DELETE" : "DELETE RECORD";
   deleteBtn.dataset.deleteRecord = "true";
   expandedWrap.append(deleteBtn);
 
@@ -864,20 +747,26 @@ function renderFocusExpanded(state: AppState): HTMLElement {
 
 function renderEntryRow(entry: Entry, record: Record): HTMLElement {
   const li = document.createElement("li");
-  li.className =
-    "flex items-center justify-between gap-4 py-2 border-b border-line/40 text-ink";
+  li.className = "entry-row";
   li.dataset.entryId = entry.id;
   li.dataset.entryRow = "true";
-  li.setAttribute("aria-label", `Entry: ${formatValueForUnit(entry.value, record.unit)} ${record.unit}, ${formatRelativeDate(entry.date).toLowerCase()}`);
+  li.setAttribute(
+    "aria-label",
+    `Entry: ${formatValueWithUnit(entry.value, record.unit)}, ${formatRelativeDate(entry.date).toLowerCase()}. Press Enter to edit or swipe left to delete.`,
+  );
 
   if (editingEntryId === entry.id) {
+    li.classList.add("entry-row--editing");
     li.append(renderEntryEditForm(entry, record));
     return li;
   }
 
+  li.tabIndex = 0;
+  li.setAttribute("role", "button");
+
   const left = document.createElement("span");
   left.className = "font-body font-medium tabular-nums";
-  left.textContent = `${formatValueForUnit(entry.value, record.unit)} ${record.unit}`;
+  left.textContent = formatValueWithUnit(entry.value, record.unit);
 
   const rightWrap = document.createElement("span");
   rightWrap.className = "flex items-center gap-3";
@@ -887,10 +776,10 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
     "font-body text-xs uppercase tracking-[0.1em] text-ink-muted";
   right.textContent = formatRelativeDate(entry.date);
 
-  // Tiny hint that swiping left deletes it.
+  // Visible affordance for the optional destructive gesture.
   const hint = document.createElement("span");
-  hint.className = "text-ink-muted opacity-40 text-xs";
-  hint.textContent = "\u2039"; // U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+  hint.className = "entry-row__hint";
+  hint.textContent = "SWIPE LEFT";
   hint.setAttribute("aria-hidden", "true");
 
   rightWrap.append(right, hint);
@@ -920,15 +809,43 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
  * its own keydown listener).
  * ------------------------------------------------------------------------- */
 
+function renderField(
+  labelText: string,
+  input: HTMLInputElement,
+  hint?: string,
+  compact = false,
+): HTMLLabelElement {
+  const label = document.createElement("label");
+  label.className = compact ? "form-field form-field--compact" : "form-field";
+
+  const header = document.createElement("span");
+  header.className = "form-field__header";
+  const name = document.createElement("span");
+  name.className = "form-field__label";
+  name.textContent = labelText;
+  header.append(name);
+
+  if (hint !== undefined) {
+    const hintElement = document.createElement("span");
+    hintElement.className = "form-field__hint";
+    hintElement.textContent = hint;
+    header.append(hintElement);
+  }
+
+  label.append(header, input);
+  return label;
+}
+
 function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
   const form = document.createElement("form");
-  form.className = "w-full flex flex-col gap-2";
+  form.className = "entry-edit-form";
   form.dataset.entryEditForm = "true";
   form.dataset.entryId = entry.id;
+  form.dataset.motionLayer = "local";
 
   // --- Top row: value + unit + date ---------------------------------------
   const topRow = document.createElement("div");
-  topRow.className = "flex items-center justify-between gap-3";
+  topRow.className = "form-grid form-grid--compact";
 
   const valueInput = document.createElement("input");
   valueInput.type = "number";
@@ -936,50 +853,31 @@ function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
   valueInput.required = true;
   valueInput.step = "any";
   valueInput.value = String(entry.value);
-  valueInput.setAttribute("aria-label", "Value");
-  valueInput.className =
-    "bg-transparent border-b border-line/40 focus:border-accent outline-none " +
-    "font-body font-medium tabular-nums text-ink text-base w-20 text-left " +
-    "transition-colors";
-
-  const unitHint = document.createElement("span");
-  unitHint.className =
-    "font-body text-xs uppercase tracking-[0.1em] text-ink-muted opacity-50 shrink-0";
-  unitHint.textContent = record.unit;
+  valueInput.inputMode = "decimal";
+  valueInput.className = "field-input field-input--compact tabular-nums";
 
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.name = "date";
   dateInput.required = true;
   dateInput.value = entry.date;
-  dateInput.setAttribute("aria-label", "Date");
-  dateInput.className =
-    "bg-transparent border-b border-line/40 focus:border-accent outline-none " +
-    "font-body font-medium tabular-nums text-ink text-sm w-36 text-left " +
-    "scheme-dark transition-colors";
+  dateInput.className = "field-input field-input--compact tabular-nums scheme-dark";
 
-  topRow.append(valueInput, unitHint, dateInput);
+  topRow.append(
+    renderField("VALUE", valueInput, record.unit, true),
+    renderField("DATE", dateInput, undefined, true),
+  );
 
   // --- Bottom row: SAVE + CANCEL ------------------------------------------
   const bottomRow = document.createElement("div");
-  bottomRow.className = "flex items-center justify-end gap-4";
+  bottomRow.className = "form-actions form-actions--compact";
 
   const save = document.createElement("button");
   save.type = "submit";
-  save.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase text-accent " +
-    "hover:text-ink transition-colors cursor-pointer";
+  save.className = "button button--primary button--compact";
   save.textContent = "SAVE";
 
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.dataset.cancelEdit = "true";
-  cancel.className =
-    "font-body text-[0.625rem] tracking-[0.2em] uppercase " +
-    "text-ink-muted/60 hover:text-ink-muted transition-colors cursor-pointer";
-  cancel.textContent = "CANCEL";
-
-  bottomRow.append(save, cancel);
+  bottomRow.append(save);
 
   form.append(topRow, bottomRow);
   return form;
@@ -991,12 +889,22 @@ function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
 
 function renderInlineAddEntryForm(record: Record): HTMLElement {
   const form = document.createElement("form");
-  form.className = "w-full flex flex-col items-center gap-3";
+  form.className = "entry-form app-surface";
   form.dataset.addEntryForm = "true";
+  form.dataset.motionLayer = "local";
 
-  // Value + unit (read-only) on one line
-  const valueRow = document.createElement("div");
-  valueRow.className = "w-full flex items-baseline justify-center gap-3";
+  const heading = document.createElement("div");
+  heading.className = "form-heading";
+  const title = document.createElement("h3");
+  title.className = "form-heading__title";
+  title.textContent = "New entry";
+  const description = document.createElement("p");
+  description.className = "form-heading__description";
+  description.textContent = `Add the latest value for ${record.name}.`;
+  heading.append(title, description);
+
+  const fields = document.createElement("div");
+  fields.className = "form-grid";
 
   const valueInput = document.createElement("input");
   valueInput.type = "number";
@@ -1004,17 +912,8 @@ function renderInlineAddEntryForm(record: Record): HTMLElement {
   valueInput.required = true;
   valueInput.step = "any";
   valueInput.placeholder = "0";
-  valueInput.setAttribute("aria-label", "Value");
-  valueInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-2xl font-display tabular-nums text-ink w-32 text-center " +
-    "transition-colors";
-
-  const unitHint = document.createElement("span");
-  unitHint.className = "font-body text-xs uppercase tracking-[0.2em] text-ink-muted opacity-60";
-  unitHint.textContent = `IN ${record.unit}`;
-
-  valueRow.append(valueInput, unitHint);
+  valueInput.inputMode = "decimal";
+  valueInput.className = "field-input field-input--large tabular-nums";
 
   // Date input
   const dateInput = document.createElement("input");
@@ -1022,21 +921,19 @@ function renderInlineAddEntryForm(record: Record): HTMLElement {
   dateInput.name = "date";
   dateInput.required = true;
   dateInput.value = todayISO();
-  dateInput.setAttribute("aria-label", "Date");
-  dateInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-base font-body tabular-nums text-ink " +
-    "scheme-dark transition-colors";
+  dateInput.className = "field-input tabular-nums scheme-dark";
 
   // Submit
   const submit = document.createElement("button");
   submit.type = "submit";
-  submit.className =
-    "font-body text-xs tracking-[0.2em] uppercase text-accent " +
-    "hover:text-ink transition-colors pt-2";
-  submit.textContent = "SAVE";
+  submit.className = "button button--primary";
+  submit.textContent = "SAVE ENTRY";
 
-  form.append(valueRow, dateInput, submit);
+  fields.append(
+    renderField("VALUE", valueInput, record.unit),
+    renderField("DATE", dateInput),
+  );
+  form.append(heading, fields, submit);
   return form;
 }
 
@@ -1062,52 +959,30 @@ const UNIT_PRESETS: ReadonlyArray<string> = [
 
 function renderNewRecord(): HTMLElement {
   const section = document.createElement("section");
-  // Constrain the section to the viewport so the form can scroll
-  // independently. The cancel button and title are pinned to the top
-  // (shrink-0) and the form fills the remaining space (flex-1) with
-  // `scroll-region` styling.
-  section.className =
-    "w-full max-w-7xl flex flex-col items-start gap-6 px-4 sm:px-8 " +
-    "h-full max-h-[100dvh]";
+  section.className = "new-record-view app-view";
   section.dataset.newRecord = "true";
-  section.style.viewTransitionName = VT_NEW_RECORD;
 
-  // Cancel button at the top-right. The form is opened by swipe-right,
-  // so there's no other way to close it without swiping left — this
-  // gives a clear tap target.
-  const cancelBtn = document.createElement("button");
-  cancelBtn.type = "button";
-  cancelBtn.dataset.action = "close-new";
-  cancelBtn.className =
-    "self-end shrink-0 font-body text-xs tracking-[0.2em] uppercase text-ink-muted " +
-    "hover:text-ink transition-colors";
-  cancelBtn.textContent = "CANCEL";
-
-  // Title with top border for visual separation.
-  const title = document.createElement("p");
-  title.className =
-    "shrink-0 font-body font-semibold text-2xl tracking-[0.2em] uppercase text-ink-muted " +
-    "w-full pb-4 border-b border-line";
-  title.textContent = "NEW RECORD";
+  const header = document.createElement("header");
+  header.className = "view-header";
+  header.dataset.motionLayer = "header";
+  const heading = document.createElement("div");
+  heading.className = "view-header__heading";
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "SWIPE LEFT TO CLOSE";
+  const title = document.createElement("h1");
+  title.className = "view-header__title";
+  title.textContent = "New record";
+  heading.append(eyebrow, title);
+  header.append(heading);
 
   const form = document.createElement("form");
-  // The form is the scroll region. `flex-1 min-h-0` lets it fill the
-  // remaining vertical space and `scroll-region` enables native touch
-  // scrolling on it. `h-full` + `overflow-y-auto` are added
-  // explicitly as a belt-and-suspenders scroll fix — the form needs
-  // to scroll when the keyboard pushes content up on mobile, and the
-  // combo guarantees `overflow-y: auto` is active regardless of how
-  // the parent flex container's height resolves.
-  // NOTE: `overflow` on the form only works if it has a constrained
-  // height. `flex-1 min-h-0` in a `h-full` flex parent gives it a
-  // determined height and allows shrinking; `scroll-region` enables
-  // native touch scrolling. `h-full` was REMOVED because it conflicts
-  // with `flex-1` (the two fight for control of the form's height),
-  // causing the form to overflow its parent instead of scrolling.
-  form.className =
-    "w-full max-w-2xl flex flex-col gap-6 text-left " +
-    "flex-1 min-h-0 scroll-region";
+  // The form owns vertical scrolling so it remains usable when the virtual
+  // keyboard reduces the visual viewport.
+  form.className = "record-form scroll-region";
+  form.id = "new-record-form";
   form.dataset.newRecordForm = "true";
+  form.dataset.motionLayer = "form";
 
   // Name — big and prominent
   const nameInput = document.createElement("input");
@@ -1115,12 +990,8 @@ function renderNewRecord(): HTMLElement {
   nameInput.name = "name";
   nameInput.required = true;
   nameInput.placeholder = "e.g. Days without smoking";
-  nameInput.setAttribute("aria-label", "Record name");
   nameInput.autocomplete = "off";
-  nameInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-3xl font-display text-ink w-full " +
-    "transition-colors";
+  nameInput.className = "field-input field-input--large";
 
   // Value — HUGE, yellow, the centerpiece
   const valueInput = document.createElement("input");
@@ -1129,15 +1000,13 @@ function renderNewRecord(): HTMLElement {
   valueInput.required = true;
   valueInput.step = "any";
   valueInput.placeholder = "0";
-  valueInput.setAttribute("aria-label", "Value");
-  valueInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-6xl font-display tabular-nums text-accent w-full text-center " +
-    "transition-colors";
+  valueInput.inputMode = "decimal";
+  valueInput.className = "field-input field-input--hero tabular-nums";
 
   // --- Unit preset picker: 3-column grid of large pill buttons --------
   const presetsRow = document.createElement("div");
-  presetsRow.className = "grid grid-cols-3 sm:grid-cols-5 gap-3";
+  presetsRow.className = "option-grid option-grid--units";
+  presetsRow.dataset.unitPresets = "true";
   presetsRow.setAttribute("role", "group");
   presetsRow.setAttribute("aria-label", "Unit preset");
 
@@ -1146,10 +1015,8 @@ function renderNewRecord(): HTMLElement {
     btn.type = "button";
     btn.dataset.unitPreset = preset;
     btn.textContent = preset === "" ? "CUSTOM" : preset;
-    btn.className =
-      "font-body text-sm tracking-[0.15em] uppercase " +
-      "px-4 py-3 border transition-colors cursor-pointer " +
-      "border-line text-ink-muted hover:text-ink hover:border-ink-muted";
+    btn.className = "option-pill border-line text-ink-muted hover:text-ink hover:border-ink-muted";
+    btn.setAttribute("aria-pressed", "false");
     presetsRow.append(btn);
   }
 
@@ -1159,16 +1026,13 @@ function renderNewRecord(): HTMLElement {
   unitInput.name = "unit";
   unitInput.required = true;
   unitInput.placeholder = "DAYS, KG, HRS...";
-  unitInput.setAttribute("aria-label", "Unit");
   unitInput.autocomplete = "off";
-  unitInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-2xl font-body tracking-[0.1em] uppercase text-ink w-full text-left " +
-    "transition-colors";
+  unitInput.className = "field-input uppercase";
 
   // --- Direction toggle: 3 large buttons in a row -----------------------
   const directionRow = document.createElement("div");
-  directionRow.className = "grid grid-cols-3 gap-3";
+  directionRow.className = "option-grid option-grid--direction";
+  directionRow.dataset.directionToggle = "true";
   directionRow.setAttribute("role", "group");
   directionRow.setAttribute("aria-label", "Direction");
 
@@ -1190,7 +1054,8 @@ function renderNewRecord(): HTMLElement {
     const stateClasses = opt.defaultActive
       ? "border-accent text-accent"
       : "border-line text-ink-muted hover:text-ink hover:border-ink-muted";
-    btn.className = `font-body text-base tracking-[0.15em] uppercase px-4 py-3 border transition-colors cursor-pointer ${stateClasses}`;
+    btn.className = `option-pill ${stateClasses}`;
+    btn.setAttribute("aria-pressed", String(opt.defaultActive));
     directionRow.append(btn);
   }
 
@@ -1206,33 +1071,55 @@ function renderNewRecord(): HTMLElement {
   dateInput.name = "date";
   dateInput.required = true;
   dateInput.value = todayISO();
-  dateInput.setAttribute("aria-label", "Date");
-  dateInput.className =
-    "bg-transparent border-b border-line focus:border-accent outline-none " +
-    "text-xl font-body tabular-nums text-ink w-full text-left " +
-    "scheme-dark transition-colors";
+  dateInput.className = "field-input tabular-nums scheme-dark";
 
   // Submit — full-width primary yellow button
   const submit = document.createElement("button");
   submit.type = "submit";
-  submit.className =
-    "font-body text-xl tracking-[0.2em] uppercase font-semibold " +
-    "text-bg bg-accent hover:bg-accent-deep " +
-    "py-4 transition-colors w-full border-t border-line mt-2";
-  submit.textContent = "SAVE";
+  submit.setAttribute("form", form.id);
+  submit.className = "button button--primary button--large";
+  submit.textContent = "CREATE RECORD";
 
-  form.append(
-    nameInput,
-    valueInput,
-    presetsRow,
-    unitInput,
-    directionRow,
-    directionHidden,
-    dateInput,
-    submit,
+  const intro = document.createElement("p");
+  intro.className = "record-form__intro";
+  intro.textContent =
+    "Define what you want to track. You can change individual entries later.";
+
+  const essentials = document.createElement("div");
+  essentials.className = "form-grid form-grid--essentials";
+  essentials.append(
+    renderField("RECORD NAME", nameInput, "Keep it short and specific"),
+    renderField("STARTING VALUE", valueInput, "Your first entry"),
   );
 
-  section.append(cancelBtn, title, form);
+  const presetsGroup = document.createElement("fieldset");
+  presetsGroup.className = "form-section";
+  const presetsLegend = document.createElement("legend");
+  presetsLegend.className = "form-field__label";
+  presetsLegend.textContent = "UNIT PRESET";
+  presetsGroup.append(presetsLegend, presetsRow);
+
+  const directionGroup = document.createElement("fieldset");
+  directionGroup.className = "form-section";
+  const directionLegend = document.createElement("legend");
+  directionLegend.className = "form-field__label";
+  directionLegend.textContent = "WHAT COUNTS AS PROGRESS?";
+  directionGroup.append(directionLegend, directionRow, directionHidden);
+
+  const details = document.createElement("div");
+  details.className = "form-grid";
+  details.append(
+    renderField("UNIT", unitInput, "Choose a preset or enter your own"),
+    renderField("START DATE", dateInput),
+  );
+
+  const footer = document.createElement("div");
+  footer.className = "record-form__footer";
+  footer.dataset.motionLayer = "footer";
+  footer.append(submit);
+
+  form.append(intro, essentials, presetsGroup, details, directionGroup);
+  section.append(header, form, footer);
   return section;
 }
 
@@ -1242,24 +1129,25 @@ function renderNewRecord(): HTMLElement {
 
 function renderGrid(state: AppState): HTMLElement {
   const section = document.createElement("section");
-  section.className = "w-full max-w-7xl flex flex-col items-center gap-10";
+  section.className = "grid-view app-view scroll-region";
   section.dataset.grid = "true";
-  // Intentionally NOT setting `viewTransitionName: VT_GRID` here. The
-  // grid section is part of the root transition (simple fade) — giving
-  // it its own named pseudo-element created an extra animated layer
-  // whose default timing didn't sync cleanly with the shared-element
-  // morph and the root fade, producing a visible wobble. Only the
-  // current record's cell carries the shared `view-transition-name`
-  // (set in `renderGridCell`), so the browser only has one element to
-  // morph: the big focus card into that one small row.
 
-  const title = document.createElement("p");
-  title.className =
-    "font-body font-semibold text-xs tracking-[0.2em] uppercase text-ink-muted";
-  title.textContent = "ALL RECORDS";
+  const header = document.createElement("header");
+  header.className = "view-header";
+  header.dataset.motionLayer = "header";
+  const heading = document.createElement("div");
+  heading.className = "view-header__heading";
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "PINCH ON A RECORD TO FOCUS";
+  const title = document.createElement("h1");
+  title.className = "view-header__title";
+  title.textContent = `${state.records.length} ${state.records.length === 1 ? "record" : "records"}`;
+  heading.append(eyebrow, title);
+  header.append(heading);
 
   const grid = document.createElement("div");
-  grid.className = "w-full flex flex-col";
+  grid.className = "records-list app-surface";
 
   const records = state.records;
   records.forEach((record, i) => {
@@ -1269,7 +1157,7 @@ function renderGrid(state: AppState): HTMLElement {
     );
   });
 
-  section.append(title, grid);
+  section.append(header, grid);
   return section;
 }
 
@@ -1278,24 +1166,17 @@ function renderGridCell(
   isCurrent: boolean,
   isLast: boolean,
 ): HTMLElement {
-  const cell = document.createElement("button");
-  cell.type = "button";
+  const cell = document.createElement("article");
   cell.className = [
-    "group flex items-baseline justify-between gap-6 py-5 w-full text-left",
-    "transition-colors duration-200 cursor-pointer",
-    isLast ? "" : "border-b border-line/40",
-    "hover:bg-line/[0.04]",
+    "record-list-item group",
+    isCurrent ? "record-list-item--current" : "",
+    isLast ? "record-list-item--last" : "",
   ]
     .filter(Boolean)
     .join(" ");
   cell.dataset.recordId = record.id;
+  cell.dataset.motionLayer = "grid-item";
   if (isCurrent) cell.dataset.currentRecord = "true";
-  // No `view-transition-name` on the cell. The grid transition is a simple
-  // root crossfade — no shared element morph. The previous "shrink" effect
-  // (the browser interpolating the big focus card into this small row)
-  // used the browser's automatic size/position interpolation, which has
-  // an internal timing that produces a visible wobble on a 400px → 60px
-  // size change. A clean root crossfade avoids it entirely.
 
   const latest = latestEntry(record);
   const previous = previousEntry(record);
@@ -1309,6 +1190,7 @@ function renderGridCell(
   name.className =
     "font-body font-semibold text-[0.6875rem] tracking-[0.2em] uppercase text-ink-muted";
   name.textContent = record.name;
+  name.dataset.flipId = `record-label-${record.id}`;
   left.append(name);
 
   const dateLine = document.createElement("span");
@@ -1334,16 +1216,9 @@ function renderGridCell(
     "font-display font-extrabold text-4xl text-accent tabular-nums leading-none " +
     "transition-transform duration-200 group-hover:scale-[1.03] origin-right";
   valueEl.textContent = latest
-    ? `${formatValueForUnit(latest.value, record.unit)} ${record.unit}`
+    ? formatValueWithUnit(latest.value, record.unit)
     : "—";
-  // Re-introduce the shared element morph for the current record's hero
-  // value. Applied to JUST the value element (not the whole cell/section)
-  // so the browser morphs the big focus card number into this small row
-  // number without the wobble that occurred when the entire section had
-  // the view-transition-name.
-  if (isCurrent) {
-    valueEl.style.viewTransitionName = VT_HERO;
-  }
+  if (isCurrent) valueEl.dataset.flipId = `hero-${record.id}`;
   right.append(valueEl);
 
   const deltaEl = document.createElement("span");
@@ -1392,5 +1267,4 @@ export const VIEW_ATTRS = {
   unitPreset: "data-unit-preset",
   direction: "data-direction",
   entryEditForm: "data-entry-edit-form",
-  cancelEdit: "data-cancel-edit",
 } as const;

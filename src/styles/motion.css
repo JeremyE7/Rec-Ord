@@ -1,122 +1,21 @@
-/* =============================================================================
- * rec-ord — Motion system
- *
- * Visual feedback styles for gestures and animations. All spring/transition
- * logic lives in `motion-controller.ts` and `view-transitions.ts` (Motion One).
- * This file handles:
- *   - Swipe progress bar (fixed at viewport bottom)
- *   - Swipe hint labels (edge indicators during horizontal drag)
- *   - "Nuevo récord" glow pulse (hero celebration)
- *   - Reduced motion overrides
- * ========================================================================== */
+/* GSAP owns view and gesture transforms. CSS only declares safe composition. */
 
-/* -----------------------------------------------------------------------------
- * Swipe-progress indicator
- *
- * A thin 2px bar fixed to the bottom edge of the viewport. It fills
- * from 0→1 (scaleX) as the user drags vertically. The transform is
- * set directly by the gesture handler (not via CSS custom properties).
- * Hidden entirely under reduced motion.
- * --------------------------------------------------------------------------- */
-.swipe-progress {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  background: var(--color-accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-  opacity: 0.9;
-  pointer-events: none;
-  will-change: transform;
-  z-index: 50;
+[data-motion-exit="true"] {
+  contain: layout paint style;
+  user-select: none;
 }
 
-/* -----------------------------------------------------------------------------
- * Swipe-hint indicators
- *
- * Edge labels that slide in and fade during horizontal drag. The gesture
- * handler drives `style.transform` and `style.opacity` directly via the
- * motion controller. Hidden under reduced motion.
- * --------------------------------------------------------------------------- */
-.swipe-hint {
-  position: fixed;
-  top: 50%;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
-  border: 1px solid var(--color-accent);
-  background: rgba(250, 204, 21, 0.08);
-  color: var(--color-accent);
-  font-family: var(--font-body);
-  font-weight: 600;
-  font-size: 0.6875rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  pointer-events: none;
-  transform: translate3d(-200px, -50%, 0);
-  opacity: 0;
-  will-change: transform, opacity;
-  z-index: 40;
-  border-radius: 0;
-  white-space: nowrap;
-}
-.swipe-hint--right {
-  left: 1.5rem;
-  flex-direction: row;
-}
-.swipe-hint__arrow {
-  font-size: 1.5rem;
-  line-height: 1;
-  letter-spacing: 0;
-  font-weight: 700;
-}
-.swipe-hint__label {
-  font-weight: 600;
-}
-
-/* -----------------------------------------------------------------------------
- * "Nuevo récord" glow pulse
- *
- * Added to the hero <h1> for ~0.7s when a new entry breaks the record's
- * previous best. A brief, satisfying flash that says "you just broke it".
- * Driven from app.ts: dispatches `rec-ord:pr-pulse`, listener adds
- * `.pr-pulse` class and removes it after 750ms.
- * --------------------------------------------------------------------------- */
-@keyframes pr-glow-pulse {
-  0% {
-    text-shadow:
-      0 0 40px rgba(250, 204, 21, 0.25),
-      0 0 80px rgba(250, 204, 21, 0.12);
-  }
-  35% {
-    text-shadow:
-      0 0 80px rgba(250, 204, 21, 0.7),
-      0 0 160px rgba(250, 204, 21, 0.4);
-  }
-  100% {
-    text-shadow:
-      0 0 40px rgba(250, 204, 21, 0.25),
-      0 0 80px rgba(250, 204, 21, 0.12);
-  }
-}
-.pr-pulse {
-  animation: pr-glow-pulse 0.7s cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-/* -----------------------------------------------------------------------------
- * Reduced motion: collapse all motion to near-instant, no movement.
- * --------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  .swipe-progress {
-    display: none;
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
-  .swipe-hint {
+
+  .background-atmosphere__glow {
     display: none;
-  }
-  .pr-pulse {
-    animation: none !important;
   }
 }

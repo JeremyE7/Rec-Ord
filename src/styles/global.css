@@ -1,154 +1,826 @@
-/* =============================================================================
- * rec-ord — Global Styles
- * Design system: Apex Performance (dark, high-contrast, athletic)
- * Stack: Tailwind CSS v4 (via @tailwindcss/vite). Tokens live in @theme.
- * ============================================================================= */
-
 @import "tailwindcss";
 @import "./motion.css";
 
-/* -----------------------------------------------------------------------------
- * Design Tokens (Tailwind v4 CSS-first config)
- * These custom properties generate utility classes:
- *   --color-*  ->  bg-*, text-*, border-*, divide-*, etc.
- *   --font-*   ->  font-*
- * ---------------------------------------------------------------------------- */
 @theme inline {
-  /* Surface */
-  --color-bg: #000000;
-  --color-surface: #122131;
-  --color-surface-low: #0d1c2d;
-  --color-line: #273647; /* borders / dividers */
-
-  /* Ink */
-  --color-ink: #d4e4fa;
-  --color-ink-muted: #94a3b8;
-
-  /* Brand accent (athletic yellow) */
+  --color-bg: #050505;
+  --color-surface: #10100f;
+  --color-surface-low: #090909;
+  --color-line: #2b2b28;
+  --color-ink: #f4f4ef;
+  --color-ink-muted: #a6a69f;
   --color-accent: #facc15;
-  --color-accent-deep: #eec200;
-
-  /* Atmospheric glow (used by BackgroundGlow orbs) */
+  --color-accent-deep: #e5b90d;
   --color-glow-a: rgba(250, 204, 21, 0.1);
-  --color-glow-b: rgba(250, 204, 21, 0.05);
-
-  /* Typography stacks */
+  --color-glow-b: rgba(250, 204, 21, 0.045);
   --font-display: "Archivo Narrow", system-ui, sans-serif;
-  --font-body: "Inter", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
 }
 
-/* -----------------------------------------------------------------------------
- * Base / Reset
- * ---------------------------------------------------------------------------- */
-@layer base {
-  html {
-    color-scheme: dark;
-    background-color: var(--color-bg);
-  }
-
-  body {
-    margin: 0;
-    min-height: 100dvh;
-    background-color: var(--color-bg);
-    color: var(--color-ink);
-    font-family: var(--font-body);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
-    /* Lock native touch gestures (scroll, pull-to-refresh, double-tap
-     * zoom) so the JS pointer-event handler in `gestures.ts` is the sole
-     * interpreter of touch input. Without this, mobile browsers fire
-     * `pointercancel` on the first sign of a swipe and the JS handler
-     * never sees the move events. The app is full-screen by design
-     * (`overflow: hidden` below) so no native scroll is needed. */
-    touch-action: none;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  h1,
-  h2,
-  h3,
-  h4,
-  p {
-    margin: 0;
-  }
-
-  a {
-    color: inherit;
-    text-decoration: none;
-  }
-
-  button {
-    font: inherit;
-    color: inherit;
-    background: transparent;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
+:root {
+  --surface-page: #050505;
+  --surface-low: #090909;
+  --surface-card: rgba(16, 16, 15, 0.96);
+  --surface-raised: #181817;
+  --surface-hover: #20201e;
+  --text-primary: #f4f4ef;
+  --text-secondary: #b4b4ad;
+  --text-tertiary: #7c7c75;
+  --accent: #facc15;
+  --accent-strong: #e5b90d;
+  --accent-ink: #17130a;
+  --danger: #facc15;
+  --danger-surface: rgba(250, 204, 21, 0.09);
+  --line: rgba(180, 180, 173, 0.18);
+  --line-strong: rgba(180, 180, 173, 0.34);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.26), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 12px 28px rgba(0, 0, 0, 0.24), 0 4px 10px rgba(0, 0, 0, 0.16);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.34), 0 8px 22px rgba(0, 0, 0, 0.2);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --duration-feedback: 80ms;
+  --duration-micro: 140ms;
+  --duration-normal: 240ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* -----------------------------------------------------------------------------
- * Layout: the app is a full-screen PWA, so html/body are locked to the
- * viewport. Specific scrollable regions (the entries list inside the
- * expanded focus view, and the new-record form) opt into scrolling by
- * adding `overflow-y: auto` to themselves. The `touch-action: none` on
- * body ensures native scroll/pinch-zoom don't fire on non-scrollable
- * surfaces; scrollable regions override with `touch-action: pan-y` so
- * the native scroll works there.
- * --------------------------------------------------------------------------- */
-@layer base {
-  html,
-  body {
-    height: 100%;
-    overflow: hidden;
-  }
+* {
+  box-sizing: border-box;
 }
 
-/* Scrollable regions opt into touch scrolling. */
+html {
+  height: 100%;
+  color-scheme: dark;
+  background: var(--surface-page);
+}
+
+body {
+  min-height: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.background-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 24%),
+    var(--surface-page);
+}
+
+.background-atmosphere::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+.background-atmosphere__glow {
+  position: absolute;
+  width: min(72vw, 700px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.46;
+}
+
+.background-atmosphere__glow--top {
+  top: -42%;
+  right: -28%;
+  background: rgba(250, 204, 21, 0.12);
+}
+
+.background-atmosphere__glow--bottom {
+  bottom: -48%;
+  left: -30%;
+  background: rgba(250, 204, 21, 0.05);
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  gap: 16px;
+  padding:
+    max(env(safe-area-inset-top), 16px)
+    max(env(safe-area-inset-right), 16px)
+    max(env(safe-area-inset-bottom), 16px)
+    max(env(safe-area-inset-left), 16px);
+  overflow: hidden;
+}
+
+.app-brand,
+.app-mount {
+  width: min(100%, 1180px);
+  margin-inline: auto;
+}
+
+.app-brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  color: var(--text-tertiary);
+}
+
+.app-brand__name {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.app-brand__meta {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+.app-mount {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-view {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.app-surface {
+  background: var(--surface-card);
+  border: 1px solid rgba(180, 180, 173, 0.12);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+}
+
 .scroll-region {
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
-}
-
-html,
-body,
-*:not(.scroll-region):not(.scroll-region *) {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-html::-webkit-scrollbar,
-body::-webkit-scrollbar,
-*:not(.scroll-region):not(.scroll-region *)::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-/* Scrollable regions get a thin, themed scrollbar so the user can see
- * there's more content below. iOS Safari hides scrollbars during
- * scroll regardless; this only shows them on platforms that respect
- * `scrollbar-*` properties (desktop browsers mainly). */
-.scroll-region {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-color: var(--line-strong) transparent;
   scrollbar-width: thin;
-  scrollbar-color: var(--color-line) transparent;
 }
+
 .scroll-region::-webkit-scrollbar {
-  width: 6px;
-  display: block;
+  width: 5px;
 }
-.scroll-region::-webkit-scrollbar-track {
+
+.scroll-region::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.button,
+.option-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition:
+    color var(--duration-micro) var(--ease-in-out),
+    background-color var(--duration-micro) var(--ease-in-out),
+    border-color var(--duration-micro) var(--ease-in-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+}
+
+.button:active,
+.option-pill:active {
+  transform: scale(0.97);
+  transition-duration: var(--duration-feedback);
+}
+
+.button {
+  min-height: 48px;
+  padding: 12px 18px;
+  font-size: 0.75rem;
+}
+
+.button--primary {
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: 0 8px 24px rgba(250, 204, 21, 0.16), 0 2px 7px rgba(0, 0, 0, 0.2);
+}
+
+.button--primary:hover {
+  background: #ffd66f;
+  box-shadow: 0 12px 30px rgba(250, 204, 21, 0.22), 0 3px 9px rgba(0, 0, 0, 0.2);
+  transform: translateY(-2px);
+}
+
+.button--danger {
+  color: var(--danger);
   background: transparent;
 }
-.scroll-region::-webkit-scrollbar-thumb {
-  background: var(--color-line);
-  border-radius: 3px;
+
+.button--danger:hover,
+.button--danger-confirm {
+  background: var(--danger-surface);
 }
-.scroll-region::-webkit-scrollbar-thumb:hover {
-  background: var(--color-ink-muted);
+
+.button--compact {
+  min-height: 38px;
+  padding: 9px 13px;
+  font-size: 0.625rem;
+}
+
+.button--large {
+  width: 100%;
+  min-height: 56px;
+  font-size: 0.8125rem;
+}
+
+.view-header {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 20px;
+  width: 100%;
+  padding: 2px 2px 16px;
+  border-bottom: 1px solid var(--line);
+  touch-action: none;
+}
+
+.view-header__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.view-header__title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-view {
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+}
+
+.record-summary {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  min-height: 0;
+  padding: clamp(18px, 4vh, 40px) clamp(4px, 2vw, 24px) 4px;
+}
+
+.record-summary--expanded {
+  flex: none;
+  gap: 12px;
+  max-height: 34%;
+  padding: 10px 2px 14px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.hero-value-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--accent);
+  text-align: left;
+}
+
+.hero-value-wrap--compact {
+  flex: none;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  gap: clamp(24px, 6vw, 64px);
+  width: 100%;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stat-label {
+  color: var(--text-tertiary);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  color: var(--text-primary);
+  font-size: clamp(1rem, 3.5vw, 1.25rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.stat-value--accent {
+  color: var(--accent);
+}
+
+.expanded-view,
+.new-record-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.expanded-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+  width: min(100%, 680px);
+  margin-inline: auto;
+  padding: 8px 4px max(24px, env(safe-area-inset-bottom));
+}
+
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 54px;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  background: rgba(16, 16, 15, 0.9);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  touch-action: pan-y;
+  transition:
+    background-color var(--duration-micro) var(--ease-in-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+}
+
+.entry-row:hover {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.entry-row--editing {
+  cursor: default;
+}
+
+.entry-row__hint {
+  color: var(--text-tertiary);
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.entry-composer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+}
+
+.entry-form,
+.entry-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.entry-form {
+  padding: clamp(16px, 4vw, 24px);
+}
+
+.entry-edit-form {
+  gap: 12px;
+}
+
+.form-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-heading__title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.form-heading__description,
+.record-form__intro {
+  max-width: 58ch;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.record-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 24px;
+  width: min(100%, 760px);
+  margin-inline: auto;
+  padding: 8px 4px 20px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+.form-grid--essentials {
+  align-items: end;
+}
+
+.form-grid--compact {
+  gap: 10px;
+}
+
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.form-field--compact {
+  gap: 5px;
+}
+
+.form-field__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.form-field__label,
+.form-field__hint {
+  color: var(--text-tertiary);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.form-field__hint {
+  overflow: hidden;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), var(--shadow-sm);
+  outline: 0;
+  transition:
+    border-color var(--duration-micro) var(--ease-in-out),
+    box-shadow var(--duration-normal) var(--ease-out),
+    background-color var(--duration-micro) var(--ease-in-out);
+}
+
+.field-input:hover {
+  background: rgba(24, 24, 23, 0.92);
+  border-color: var(--line-strong);
+}
+
+.field-input:focus {
+  background: var(--surface-raised);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(244, 201, 93, 0.12), var(--shadow-sm);
+}
+
+.field-input::placeholder {
+  color: var(--text-tertiary);
+  opacity: 0.68;
+}
+
+.field-input--large {
+  min-height: 60px;
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 5vw, 2rem);
+  font-weight: 600;
+}
+
+.field-input--hero {
+  min-height: 74px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 10vw, 4.5rem);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.field-input--compact {
+  min-height: 42px;
+  padding: 9px 10px;
+  font-size: 0.875rem;
+}
+
+.option-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.option-grid--units {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.option-grid--direction {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.option-pill {
+  min-height: 44px;
+  padding: 9px 8px;
+  color: var(--text-secondary);
+  background: rgba(16, 16, 15, 0.82);
+  border: 1px solid var(--line);
+  font-size: 0.625rem;
+}
+
+.option-pill:hover {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+}
+
+.option-pill[aria-pressed="true"] {
+  color: var(--accent);
+  background: rgba(244, 201, 93, 0.09);
+  border-color: rgba(244, 201, 93, 0.7);
+  box-shadow: 0 0 0 2px rgba(244, 201, 93, 0.06);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.form-actions--compact {
+  padding-top: 2px;
+}
+
+.record-form__footer {
+  flex: none;
+  width: min(100%, 760px);
+  margin-inline: auto;
+  padding: 2px 4px 0;
+}
+
+.grid-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+}
+
+.records-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 6px 16px;
+}
+
+.record-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  min-height: 84px;
+  padding: 14px 10px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: default;
+  touch-action: none;
+  transition: background-color var(--duration-micro) var(--ease-in-out);
+}
+
+.record-list-item--current {
+  background: rgba(244, 201, 93, 0.05);
+}
+
+.record-list-item--last {
+  border-bottom-color: transparent;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
+  width: min(100%, 720px);
+  height: min(100%, 560px);
+  margin: auto;
+  padding: clamp(28px, 8vw, 64px);
+}
+
+.empty-state__title {
+  max-width: 12ch;
+  font-family: var(--font-display);
+  font-size: clamp(2.8rem, 11vw, 6rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+}
+
+.empty-state__description {
+  max-width: 48ch;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.gesture-note {
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .record-summary {
+    padding-top: 14px;
+  }
+
+  .record-summary--expanded {
+    max-height: 31%;
+  }
+
+  .form-grid,
+  .form-grid--compact {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid--compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .option-grid--units {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .entry-row__hint {
+    display: none;
+  }
+}
+
+@media (max-height: 700px) {
+  .app-shell {
+    gap: 10px;
+    padding-top: max(env(safe-area-inset-top), 10px);
+    padding-bottom: max(env(safe-area-inset-bottom), 10px);
+  }
+
+  .app-brand {
+    min-height: 22px;
+  }
+
+  .record-summary {
+    gap: 14px;
+    padding-top: 8px;
+  }
+
+  .record-summary--expanded {
+    max-height: 28%;
+    padding-block: 4px 8px;
+  }
 }
