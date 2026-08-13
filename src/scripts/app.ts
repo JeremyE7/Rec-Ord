@@ -126,6 +126,15 @@ function wire(root: HTMLElement): void {
     deleteBtn.addEventListener("click", onDeleteRecordClick);
   }
 
+  // Grid/list records are directly selectable. Native buttons provide tap,
+  // click, Enter, and Space activation without adding visible controls.
+  const recordCells = root.querySelectorAll<HTMLButtonElement>(
+    `button[${VIEW_ATTRS.recordId}]`,
+  );
+  recordCells.forEach((cell) => {
+    cell.addEventListener("click", onGridRecordClick);
+  });
+
   // Entry rows: swipe-to-delete + tap-to-edit
   const rows = root.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`);
   rows.forEach((row) => {
@@ -553,6 +562,28 @@ function collapseEdit(): boolean {
   return true;
 }
 
+function focusGridRecord(recordId: string): boolean {
+  const state = getState();
+  if (state.view !== "grid") return false;
+  if (!state.records.some((record) => record.id === recordId)) return false;
+
+  void commit(() => {
+    setState({
+      view: "focus",
+      currentRecordId: recordId,
+      expanded: false,
+      addingEntry: false,
+    });
+  }, { type: "grid", direction: "in" });
+  return true;
+}
+
+function onGridRecordClick(event: MouseEvent): void {
+  const cell = event.currentTarget as HTMLButtonElement;
+  const recordId = cell.getAttribute(VIEW_ATTRS.recordId);
+  if (recordId !== null) focusGridRecord(recordId);
+}
+
 function openGrid(): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded || state.records.length === 0) return false;
@@ -567,16 +598,11 @@ function closeGrid(centroid?: { x: number; y: number }): boolean {
   if (state.view !== "grid") return false;
   // Try to focus the cell under the pinch centroid. If none, just
   // return to the current focus.
-  const target = centroid ? findRecordIdAt(state, centroid) : null;
-  void commit(() => {
-    setState({
-      view: "focus",
-      currentRecordId: target ?? state.currentRecordId,
-      expanded: false,
-      addingEntry: false,
-    });
-  }, { type: "grid", direction: "in" });
-  return true;
+  const target = centroid
+    ? findRecordIdAt(state, centroid)
+    : null;
+  const recordId = target ?? state.currentRecordId ?? state.records[0]?.id;
+  return recordId === undefined ? false : focusGridRecord(recordId);
 }
 
 function findRecordIdAt(state: AppState, point: { x: number; y: number }): string | null {

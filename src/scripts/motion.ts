@@ -31,6 +31,17 @@ interface ActiveTransition {
 
 type CapturedFlipState = ReturnType<typeof Flip.getState>;
 
+const SHARED_FLIP_PROPS = [
+  "backgroundColor",
+  "borderRadius",
+  "color",
+  "fontFamily",
+  "fontSize",
+  "fontWeight",
+  "letterSpacing",
+  "lineHeight",
+].join(",");
+
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 let activeTransition: ActiveTransition | null = null;
 
@@ -209,8 +220,8 @@ function animateSharedLayout(
 
   // Keep the destination in its final document flow from the first frame.
   // A temporary shield hides every non-shared element while matching shared
-  // targets animate above it. Once Flip has restored their final transforms,
-  // fading the shield reveals an already-settled layout with no reflow jump.
+  // targets animate above it. Matching semantic text nodes let Flip interpolate
+  // position and typography directly without clone scaling or a final swap.
   const wasInert = newElement.inert;
   const shield = createRevealShield(mount);
   const restoreOverflow = exposeSharedOverflow(sharedTargets, newElement);
@@ -218,15 +229,16 @@ function animateSharedLayout(
   gsap.set(sharedTargets, {
     position: "relative",
     zIndex: 3,
-    willChange: "transform",
+    willChange: "transform,font-size,line-height,letter-spacing,color",
   });
 
   const timeline = Flip.from(state, {
     targets: sharedTargets,
     absolute: false,
     nested: true,
-    scale: true,
+    scale: false,
     fade: false,
+    props: SHARED_FLIP_PROPS,
     duration: motionDurations.sharedLayout,
     ease: motionEases.shared,
     paused: true,
@@ -373,7 +385,7 @@ export function commit(
 
   if (oldElement !== null) gsap.killTweensOf(oldElement);
   const flipState = shouldFlip && oldShared.length > 0
-    ? Flip.getState(oldShared)
+    ? Flip.getState(oldShared, { props: SHARED_FLIP_PROPS })
     : null;
 
   update();

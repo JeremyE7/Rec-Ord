@@ -323,11 +323,18 @@ function findCurrentRecord(state: AppState): Record | null {
   return state.records.find((r) => r.id === state.currentRecordId) ?? null;
 }
 
+function normalizedUnit(unit: string): string {
+  return unit.trim().toUpperCase();
+}
+
+function valueIncludesUnit(unit: string): boolean {
+  return ["HRS", "MIN", "SEC"].includes(normalizedUnit(unit));
+}
+
 function formatValueWithUnit(value: number, unit: string): string {
-  const normalizedUnit = unit.trim().toUpperCase();
-  const formatted = formatValueForUnit(value, normalizedUnit);
-  const includesUnit = normalizedUnit === "HRS" || normalizedUnit === "MIN" || normalizedUnit === "SEC";
-  return includesUnit ? formatted : `${formatted} ${normalizedUnit}`;
+  const normalized = normalizedUnit(unit);
+  const formatted = formatValueForUnit(value, normalized);
+  return valueIncludesUnit(normalized) ? formatted : `${formatted} ${normalized}`;
 }
 
 function renderFocus(state: AppState): HTMLElement {
@@ -541,7 +548,6 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   // h1 wraps when the value is too wide.
   heroWrap.className =
     `hero-value-wrap ${compact ? "hero-value-wrap--compact" : ""}`;
-  heroWrap.dataset.flipId = `hero-${record.id}`;
   if (compact) heroWrap.dataset.motionLayer = "hero";
 
   // Direction indicator: small ↑ or ↓ badge in the top-right corner.
@@ -586,6 +592,7 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   value.dataset.hero = "true";
   value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 break-words`;
   value.textContent = formatValueForUnit(latest.value, record.unit);
+  value.dataset.flipId = `record-value-${record.id}`;
 
   // Unit: displayed BELOW the value as a secondary label.
   const unit = document.createElement("div");
@@ -593,6 +600,9 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
     ? "font-body text-sm tracking-[0.2em] uppercase text-ink-muted mt-1"
     : "font-body text-xl tracking-[0.2em] uppercase text-ink-muted mt-2";
   unit.textContent = record.unit;
+  if (!valueIncludesUnit(record.unit)) {
+    unit.dataset.flipId = `record-unit-${record.id}`;
+  }
 
   heroWrap.append(value, unit);
   return heroWrap;
@@ -1139,7 +1149,7 @@ function renderGrid(state: AppState): HTMLElement {
   heading.className = "view-header__heading";
   const eyebrow = document.createElement("span");
   eyebrow.className = "eyebrow";
-  eyebrow.textContent = "PINCH ON A RECORD TO FOCUS";
+  eyebrow.textContent = "TAP A RECORD TO FOCUS";
   const title = document.createElement("h1");
   title.className = "view-header__title";
   title.textContent = `${state.records.length} ${state.records.length === 1 ? "record" : "records"}`;
@@ -1166,7 +1176,8 @@ function renderGridCell(
   isCurrent: boolean,
   isLast: boolean,
 ): HTMLElement {
-  const cell = document.createElement("article");
+  const cell = document.createElement("button");
+  cell.type = "button";
   cell.className = [
     "record-list-item group",
     isCurrent ? "record-list-item--current" : "",
@@ -1176,7 +1187,11 @@ function renderGridCell(
     .join(" ");
   cell.dataset.recordId = record.id;
   cell.dataset.motionLayer = "grid-item";
-  if (isCurrent) cell.dataset.currentRecord = "true";
+  cell.setAttribute("aria-label", `Focus ${record.name}`);
+  if (isCurrent) {
+    cell.dataset.currentRecord = "true";
+    cell.setAttribute("aria-current", "true");
+  }
 
   const latest = latestEntry(record);
   const previous = previousEntry(record);
@@ -1211,15 +1226,27 @@ function renderGridCell(
   const right = document.createElement("div");
   right.className = "flex flex-col items-end gap-1 shrink-0";
 
-  const valueEl = document.createElement("span");
-  valueEl.className =
+  const valueLine = document.createElement("span");
+  valueLine.className =
     "font-display font-extrabold text-4xl text-accent tabular-nums leading-none " +
-    "transition-transform duration-200 group-hover:scale-[1.03] origin-right";
+    "whitespace-nowrap transition-transform duration-200 group-hover:scale-[1.03] origin-right";
+
+  const valueEl = document.createElement("span");
   valueEl.textContent = latest
-    ? formatValueWithUnit(latest.value, record.unit)
+    ? formatValueForUnit(latest.value, record.unit)
     : "—";
-  if (isCurrent) valueEl.dataset.flipId = `hero-${record.id}`;
-  right.append(valueEl);
+  valueEl.dataset.flipId = `record-value-${record.id}`;
+  valueLine.append(valueEl);
+
+  if (latest && !valueIncludesUnit(record.unit)) {
+    const unitEl = document.createElement("span");
+    unitEl.className = "ml-[0.18em]";
+    unitEl.textContent = normalizedUnit(record.unit);
+    unitEl.dataset.flipId = `record-unit-${record.id}`;
+    valueLine.append(unitEl);
+  }
+
+  right.append(valueLine);
 
   const deltaEl = document.createElement("span");
   deltaEl.className =
