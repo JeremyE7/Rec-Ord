@@ -9,7 +9,7 @@
  * multiple state changes during a swipe-release).
  */
 
-import type { Entry, PersistedState, Record } from "./types";
+import type { PersistedState } from "./types";
 
 const STORAGE_KEY = "rec-ord:state:v1";
 const DEBOUNCE_MS = 200;
@@ -43,17 +43,13 @@ function isPersistedState(value: unknown): value is PersistedState {
   return true;
 }
 
-/** Reads persisted state. If absent, returns the seed data so first-time
- *  visitors land on a populated app. Returns null only on malformed JSON or
- *  storage errors. */
+/** Reads persisted state. A first visit starts empty. Returns null only on
+ *  malformed JSON or storage errors. */
 export function loadState(): PersistedState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) {
-      // First-ever visit: hand back the seed. The store subscriber saves it
-      // to localStorage on the first render, so the seed becomes permanent
-      // (the next visit will read the saved copy).
-      return getSeedData();
+      return { records: [], currentRecordId: null };
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isPersistedState(parsed)) {
@@ -129,112 +125,4 @@ export function flushSave(): void {
     clearTimeout(saveTimer);
     flush();
   }
-}
-
-/* ---------------------------------------------------------------------------
- * Seed data (first-visit examples + "LOAD EXAMPLES" button payload)
- *
- * Five diverse records demonstrating the generic nature of the tracker
- * (days, hours, weight, minutes). All dates are computed relative to "now"
- * so the seed always looks fresh, and the first record (most recent) is
- * the one the user lands on.
- * ------------------------------------------------------------------------- */
-
-const DAY_MS = 86_400_000;
-
-export function getSeedData(): PersistedState {
-  const now = new Date();
-  const isoNow = now.toISOString();
-  const daysAgo = (n: number): string => {
-    const d = new Date(now.getTime() - n * DAY_MS);
-    // ISO-8601 always starts with "YYYY-MM-DD"; .slice is the type-safe
-    // equivalent of .split("T")[0] under `noUncheckedIndexedAccess`.
-    return d.toISOString().slice(0, 10);
-  };
-  const makeEntry = (value: number, daysBack: number): Entry => ({
-    id: crypto.randomUUID(),
-    value,
-    date: daysAgo(daysBack),
-  });
-
-  const records: Record[] = [
-    {
-      id: crypto.randomUUID(),
-      name: "STREAK",
-      unit: "DAYS",
-      createdAt: isoNow,
-      entries: [
-        makeEntry(30, 0),
-        makeEntry(25, 6),
-        makeEntry(20, 13),
-        makeEntry(15, 21),
-        makeEntry(10, 28),
-        makeEntry(5, 35),
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "WEIGHT",
-      unit: "KG",
-      createdAt: new Date(now.getTime() - 3 * DAY_MS).toISOString(),
-      entries: [
-        makeEntry(78.2, 0),
-        makeEntry(78.5, 3),
-        makeEntry(78.8, 7),
-        makeEntry(79.1, 12),
-        makeEntry(79.4, 18),
-        makeEntry(79.8, 25),
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "SLEEP",
-      unit: "HRS",
-      createdAt: new Date(now.getTime() - 7 * DAY_MS).toISOString(),
-      entries: [
-        makeEntry(7.5, 0),
-        makeEntry(6.8, 1),
-        makeEntry(7.2, 2),
-        makeEntry(8.0, 3),
-        makeEntry(7.0, 4),
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "MEDITATION",
-      unit: "MIN",
-      createdAt: new Date(now.getTime() - 14 * DAY_MS).toISOString(),
-      entries: [
-        makeEntry(20, 0),
-        makeEntry(15, 1),
-        makeEntry(25, 2),
-        makeEntry(10, 4),
-      ],
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "WORKOUT",
-      unit: "MIN",
-      createdAt: new Date(now.getTime() - 30 * DAY_MS).toISOString(),
-      entries: [
-        makeEntry(45, 0),
-        makeEntry(30, 1),
-        makeEntry(60, 3),
-        makeEntry(40, 4),
-      ],
-    },
-  ];
-
-  // `records` is defined inline above with five entries, so the first
-  // element always exists at runtime. The `if` is for
-  // `noUncheckedIndexedAccess` (which otherwise widens `records[0]`
-  // to `Record | undefined`).
-  const first = records[0];
-  if (first === undefined) {
-    throw new Error("getSeedData: seed records array is empty");
-  }
-  return {
-    records,
-    currentRecordId: first.id,
-  };
 }
