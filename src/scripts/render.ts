@@ -527,13 +527,9 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   // and the first thing the eye sees. The unit sits below as a secondary
   // label. The direction indicator (if any) is a small badge.
   //
-  // Overflow guard: `max-w-full overflow-hidden` on the wrapper is a
-  // safety net for very long values (e.g. "999999"). The `clamp()` on
-  // the h1 font-size already constrains the value visually, but if the
-  // viewport is unusually narrow OR the value is unusually wide, the
-  // h1 could overflow the container. The wrapper's `overflow-hidden`
-  // clips any overshoot cleanly (no horizontal scrollbar, no layout
-  // breakage on the flex parent).
+  // The value stays on one visible line even while Flip interpolates its
+  // width. Allowing word breaks here makes multi-character values stack
+  // vertically while the animated width is still narrower than the glyphs.
   const heroWrap = document.createElement("div");
   // `flex flex-col items-start justify-end` so when the h1 wraps (e.g.,
   // a 3+ digit value on a narrow screen), the wrapper grows UPWARD
@@ -565,14 +561,9 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   // Value: the dominant number. `data-hero` is the GSAP celebration hook
   // when a new entry becomes a personal best.
   //
-  // `overflow-hidden text-clip` REMOVED: when the value is too wide for
-  // the container, the h1 WRAPS (text-wrap) instead of truncating.
-  // The hero wrapper's `justify-end` anchors the bottom, so wrapped
-  // lines extend upward (the h1 grows in height and pushes the top
-  // of the wrapper up, not the unit down). `min-w-0` allows the h1
-  // to shrink in a flex context. `max-w-full` still caps the width.
-  // `break-words` (overflow-wrap: break-word) lets the number itself
-  // break across lines (numbers don't have natural break points).
+  // `whitespace-nowrap`, normal overflow wrapping, and visible overflow are
+  // intentionally scoped to this main hero value; grid/list values keep their
+  // own layout behavior.
   // Time units (HRS, MIN, SEC) use a SMALLER font ("1h 30m" is wider
   // than "30" so a smaller size keeps the hero visually balanced with
   // the integer/decimal records). Everything else uses the standard
@@ -590,7 +581,7 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
-  value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 break-words`;
+  value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 whitespace-nowrap [overflow-wrap:normal] overflow-visible`;
   value.textContent = formatValueForUnit(latest.value, record.unit);
   value.dataset.flipId = `record-value-${record.id}`;
 
