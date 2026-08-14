@@ -12,6 +12,8 @@
 import type { PersistedState } from "./types";
 
 const STORAGE_KEY = "rec-ord:state:v1";
+const ROLLBACK_KEY = "rec-ord:rollback:v1";
+const LAST_BACKUP_KEY = "rec-ord:last-backup:v1";
 const DEBOUNCE_MS = 200;
 
 function isPersistedState(value: unknown): value is PersistedState {
@@ -94,21 +96,85 @@ export function normalize(loaded: PersistedState | null): PersistedState {
 }
 
 /* ---------------------------------------------------------------------------
+ * Backup metadata and session rollback
+ * ------------------------------------------------------------------------- */
+
+/** Stores one pre-restore snapshot for this browser session. */
+export function saveRollback(state: PersistedState): boolean {
+  try {
+    sessionStorage.setItem(ROLLBACK_KEY, JSON.stringify(state));
+    return true;
+  } catch (err) {
+    console.error("[rec-ord] failed to save restore rollback:", err);
+    return false;
+  }
+}
+
+/** Returns the pre-restore snapshot when it is still valid. */
+export function loadRollback(): PersistedState | null {
+  try {
+    const raw = sessionStorage.getItem(ROLLBACK_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPersistedState(parsed)) {
+      sessionStorage.removeItem(ROLLBACK_KEY);
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.error("[rec-ord] failed to load restore rollback:", err);
+    return null;
+  }
+}
+
+export function clearRollback(): void {
+  try {
+    sessionStorage.removeItem(ROLLBACK_KEY);
+  } catch (err) {
+    console.error("[rec-ord] failed to clear restore rollback:", err);
+  }
+}
+
+export function saveLastBackupAt(timestamp: string): boolean {
+  if (!Number.isFinite(Date.parse(timestamp))) return false;
+  try {
+    localStorage.setItem(LAST_BACKUP_KEY, timestamp);
+    return true;
+  } catch (err) {
+    console.error("[rec-ord] failed to save backup timestamp:", err);
+    return false;
+  }
+}
+
+export function loadLastBackupAt(): string | null {
+  try {
+    const timestamp = localStorage.getItem(LAST_BACKUP_KEY);
+    if (timestamp === null || !Number.isFinite(Date.parse(timestamp))) return null;
+    return timestamp;
+  } catch (err) {
+    console.error("[rec-ord] failed to load backup timestamp:", err);
+    return null;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Debounced save
  * ------------------------------------------------------------------------- */
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingState: PersistedState | null = null;
 
-function flush(): void {
-  if (pendingState === null) return;
+function flush(): boolean {
+  if (pendingState === null) return true;
   const toSave = pendingState;
   pendingState = null;
   saveTimer = null;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    return true;
   } catch (err) {
     console.error("[rec-ord] failed to save state:", err);
+    return false;
   }
 }
 
@@ -120,9 +186,10 @@ export function saveState(records: PersistedState["records"], currentRecordId: s
 }
 
 /** Force any pending debounced save to run immediately. */
-export function flushSave(): void {
+export function flushSave(): boolean {
   if (saveTimer !== null) {
     clearTimeout(saveTimer);
-    flush();
+    return flush();
   }
+  return true;
 }

@@ -8,13 +8,135 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
 
   <main class="app-shell">
     <header class="app-brand" aria-label="Application identity">
-      <span class="app-brand__name">REC—ORD</span>
+      <button
+        type="button"
+        class="app-brand__name app-brand__trigger"
+        data-data-trigger
+        aria-label="Open data backup and restore"
+        aria-haspopup="dialog"
+        aria-controls="data-dialog"
+      >
+        REC—ORD
+      </button>
       <span class="app-brand__meta">SWIPE · HOLD · TAP</span>
     </header>
     <div id="app" class="app-mount"></div>
   </main>
+
+  <dialog
+    id="data-dialog"
+    class="data-dialog"
+    aria-labelledby="data-dialog-title"
+  >
+    <div class="data-dialog__surface" data-data-surface>
+      <header class="data-dialog__header">
+        <div class="data-dialog__heading">
+          <span class="eyebrow">LOCAL DATA</span>
+          <h1 id="data-dialog-title">Your data, in your hands.</h1>
+        </div>
+        <button
+          type="button"
+          class="data-dialog__close"
+          data-data-close
+          aria-label="Close data tools"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+            <path d="M5 5 19 19M19 5 5 19" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="data-dialog__content" data-data-content>
+        <section class="data-step" data-data-step="home">
+          <div class="data-overview">
+            <span class="data-overview__label">ON THIS DEVICE</span>
+            <p class="data-overview__value" data-data-summary>0 RECORDS · 0 ENTRIES</p>
+            <p class="data-overview__meta" data-last-backup>NO EXTERNAL BACKUP YET</p>
+          </div>
+
+          <div class="data-actions" aria-label="Data actions">
+            <button type="button" class="data-action" data-backup-action>
+              <span class="data-action__index">01</span>
+              <span class="data-action__copy">
+                <strong>BACK UP</strong>
+                <small>Create a portable copy</small>
+              </span>
+              <svg class="data-action__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                <path d="M5 12h14M14 7l5 5-5 5" />
+              </svg>
+            </button>
+
+            <button type="button" class="data-action" data-restore-action>
+              <span class="data-action__index">02</span>
+              <span class="data-action__copy">
+                <strong>RESTORE</strong>
+                <small>Replace from a backup file</small>
+              </span>
+              <svg class="data-action__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                <path d="M5 12h14M14 7l5 5-5 5" />
+              </svg>
+            </button>
+
+            <button type="button" class="data-action" data-undo-restore hidden>
+              <span class="data-action__index">03</span>
+              <span class="data-action__copy">
+                <strong>UNDO RESTORE</strong>
+                <small>Return to the previous session data</small>
+              </span>
+              <svg class="data-action__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                <path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6" />
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="data-step" data-data-step="preview" hidden>
+          <div class="data-preview">
+            <span class="data-overview__label">RESTORE PREVIEW</span>
+            <h2 data-preview-file>BACKUP</h2>
+            <p data-preview-date></p>
+            <p class="data-preview__count" data-preview-count></p>
+            <p class="data-preview__warning">
+              This replaces the data on this device. A temporary rollback is created first.
+            </p>
+          </div>
+
+          <div class="data-actions" aria-label="Restore confirmation">
+            <button type="button" class="data-action data-action--accent" data-confirm-restore>
+              <span class="data-action__index">01</span>
+              <span class="data-action__copy">
+                <strong>RESTORE BACKUP</strong>
+                <small>Replace data on this device</small>
+              </span>
+              <svg class="data-action__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                <path d="M5 12h14M14 7l5 5-5 5" />
+              </svg>
+            </button>
+            <button type="button" class="data-action" data-cancel-restore>
+              <span class="data-action__index">02</span>
+              <span class="data-action__copy">
+                <strong>CANCEL</strong>
+                <small>Keep current data unchanged</small>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <p class="data-dialog__status" data-data-status role="status" aria-live="polite"></p>
+      </div>
+
+      <p class="data-dialog__hint">SWIPE DOWN TO CLOSE</p>
+      <input
+        type="file"
+        accept="application/json,.json"
+        data-backup-file
+        hidden
+      />
+    </div>
+  </dialog>
 </BaseLayout>
 
 <script>
   import "../scripts/app";
+  import "../scripts/data-utility";
 </script>
