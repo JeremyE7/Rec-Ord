@@ -349,9 +349,46 @@ function renderFocus(state: AppState): HTMLElement {
   const section = document.createElement("section");
   section.className = "focus-view app-view";
   section.dataset.focusCard = "true";
-  section.append(renderFocusInner(record, latest, false));
+  section.append(
+    renderFocusInner(record, latest, false),
+    renderRecordListSwipeIndicator(),
+  );
 
   return section;
+}
+
+function renderRecordListSwipeIndicator(): HTMLElement {
+  const rail = document.createElement("div");
+  rail.className = "record-list-swipe-cue";
+  rail.setAttribute("aria-hidden", "true");
+
+  const indicator = document.createElement("div");
+  indicator.className = "record-list-swipe-indicator";
+  indicator.dataset.recordListIndicator = "true";
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.classList.add("record-list-swipe-indicator__icon");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("fill", "none");
+  icon.setAttribute("stroke", "currentColor");
+  icon.setAttribute("stroke-width", "2");
+  icon.setAttribute("stroke-linecap", "round");
+
+  for (const y of [6, 12, 18]) {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", "4");
+    line.setAttribute("x2", "20");
+    line.setAttribute("y1", String(y));
+    line.setAttribute("y2", String(y));
+    icon.append(line);
+  }
+
+  const label = document.createElement("span");
+  label.textContent = "ALL RECORDS";
+
+  indicator.append(icon, label);
+  rail.append(indicator);
+  return rail;
 }
 
 function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTMLElement {

@@ -9,12 +9,15 @@
 import {
   animateRowDelete,
   beginDirectManipulation,
+  beginListSwipeIndicator,
+  dismissListSwipeIndicator,
   prefersReducedMotion,
   pressSignal,
   releasePress,
   rubberBand,
   springBack,
   updateDragFeedback,
+  updateListSwipeIndicator,
 } from "./motion";
 import { gestureMotion } from "./motion-tokens";
 
@@ -49,6 +52,7 @@ interface GestureState {
   primaryId: number | null;
   eligible: boolean;
   axis: "h" | "v" | null;
+  feedback: "surface" | "list-indicator" | null;
   dragging: boolean;
   longPressFired: boolean;
   longPressCommitted: boolean;
@@ -63,6 +67,7 @@ function createState(): GestureState {
     primaryId: null,
     eligible: false,
     axis: null,
+    feedback: null,
     dragging: false,
     longPressFired: false,
     longPressCommitted: false,
@@ -81,6 +86,10 @@ function activeSurface(root: HTMLElement, view: "focus" | "new" | "grid"): HTMLE
   if (view === "new") return root.querySelector<HTMLElement>("[data-new-record]");
   if (view === "focus") return root.querySelector<HTMLElement>("[data-focus-card]");
   return null;
+}
+
+function activeListIndicator(root: HTMLElement): HTMLElement | null {
+  return root.querySelector<HTMLElement>("[data-record-list-indicator]");
 }
 
 function haptic(): void {
@@ -135,6 +144,7 @@ export function attachGestures(options: AttachOptions): () => void {
     state.primaryId = null;
     state.eligible = false;
     state.axis = null;
+    state.feedback = null;
     state.dragging = false;
     state.longPressFired = false;
     state.longPressCommitted = false;
@@ -155,12 +165,23 @@ export function attachGestures(options: AttachOptions): () => void {
     frame = null;
     if (!state.dragging || state.axis === null) return;
 
-    const view = getView();
-    const surface = activeSurface(root, view);
+    if (state.axis === "h" && state.feedback === "list-indicator") {
+      const indicator = activeListIndicator(root);
+      if (indicator !== null) {
+        updateListSwipeIndicator(
+          indicator,
+          Math.max(0, -latestX) / gestureMotion.swipeDistance,
+        );
+      }
+      return;
+    }
+
+    const surface = activeSurface(root, getView());
     if (surface === null) return;
 
     if (state.axis === "h") {
-      updateDragFeedback(surface, latestX, 0);
+      const x = getView() === "focus" ? Math.max(0, latestX) : latestX;
+      updateDragFeedback(surface, x, 0);
       return;
     }
 
@@ -173,6 +194,18 @@ export function attachGestures(options: AttachOptions): () => void {
 
   const scheduleFrame = (): void => {
     if (frame === null) frame = requestAnimationFrame(applyFrame);
+  };
+
+  const cancelDragFeedback = (): void => {
+    if (!state.dragging) return;
+    if (state.feedback === "list-indicator") {
+      const indicator = activeListIndicator(root);
+      if (indicator !== null) dismissListSwipeIndicator(indicator);
+      return;
+    }
+
+    const surface = activeSurface(root, getView());
+    if (surface !== null) springBack(surface);
   };
 
   const startPrimary = (event: PointerEvent): void => {
@@ -251,12 +284,10 @@ export function attachGestures(options: AttachOptions): () => void {
 
     clearTimers();
     releasePressFeedback();
-    if (state.dragging) {
-      const surface = activeSurface(root, getView());
-      if (surface !== null) springBack(surface);
-    }
+    cancelDragFeedback();
     state.dragging = false;
     state.axis = null;
+    state.feedback = null;
     state.eligible = false;
   };
 
@@ -279,7 +310,7 @@ export function attachGestures(options: AttachOptions): () => void {
     if (state.axis === null) return;
     state.dragging = true;
     clearTimers();
-    state.pressingElement = null;
+    releasePressFeedback();
     if (state.primaryId !== null) {
       try {
         root.setPointerCapture(state.primaryId);
@@ -287,8 +318,15 @@ export function attachGestures(options: AttachOptions): () => void {
         // Capture is optional.
       }
     }
-    const surface = activeSurface(root, view);
-    if (surface !== null) beginDirectManipulation(surface);
+    const previewsList = view === "focus" && state.axis === "h" && dx < 0;
+    state.feedback = previewsList ? "list-indicator" : "surface";
+    if (previewsList) {
+      const indicator = activeListIndicator(root);
+      if (indicator !== null) beginListSwipeIndicator(indicator);
+    } else {
+      const surface = activeSurface(root, view);
+      if (surface !== null) beginDirectManipulation(surface);
+    }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -324,6 +362,14 @@ export function attachGestures(options: AttachOptions): () => void {
     const elapsed = Math.max(1, event.timeStamp - pointer.startedAt);
     const distance = state.axis === "h" ? Math.abs(dx) : Math.abs(dy);
     const velocity = distance / elapsed;
+    if (
+      state.axis === "h" &&
+      getView() === "focus" &&
+      ((state.feedback === "list-indicator" && dx >= 0) ||
+        (state.feedback === "surface" && dx <= 0))
+    ) {
+      return false;
+    }
     const shouldCommit =
       distance >= gestureMotion.swipeDistance || velocity >= gestureMotion.swipeVelocity;
     if (!shouldCommit) return false;
@@ -360,10 +406,7 @@ export function attachGestures(options: AttachOptions): () => void {
 
     if (allowCommit && state.longPressCommitted) armClickSuppression();
     const committed = allowCommit && !state.longPressFired && commitPrimary(pointer, event);
-    if (!committed && state.dragging) {
-      const surface = activeSurface(root, getView());
-      if (surface !== null) springBack(surface);
-    }
+    if (!committed) cancelDragFeedback();
 
     releaseCapture(event.pointerId);
     resetPrimary();

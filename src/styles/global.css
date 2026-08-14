@@ -340,9 +340,49 @@ p {
 }
 
 .focus-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   touch-action: none;
+}
+
+.record-list-swipe-cue {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.record-list-swipe-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 14px 10px 12px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(28px, 0, 0) scale(0.96);
+  transform-origin: 100% 50%;
+  white-space: nowrap;
+}
+
+.record-list-swipe-indicator__icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 .record-summary {

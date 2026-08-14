@@ -1,8 +1,10 @@
 /**
  * Gesture-led GSAP motion controller.
  *
- * Navigation begins as direct manipulation: the active surface follows the
- * pointer exactly, then continues from that visual position on release.
+ * Most navigation begins as direct manipulation: the active surface follows
+ * the pointer exactly, then continues from that visual position on release.
+ * List navigation keeps the record geometry stable and previews the action
+ * with a dedicated edge indicator instead.
  * Layout changes use shared-element FLIP animation. Local form changes only
  * animate the element that appeared; the application root never crossfades.
  */
@@ -61,6 +63,12 @@ function transitionDuration(velocity = 0): number {
 function clearInlineMotion(element: HTMLElement): void {
   gsap.set(element, {
     clearProps: "transform,opacity,visibility,willChange,zIndex,position,top,left,width,height,margin,pointerEvents,backgroundColor,overflow,transformOrigin",
+  });
+}
+
+function clearListSwipeIndicator(element: HTMLElement): void {
+  gsap.set(element, {
+    clearProps: "transform,opacity,visibility,willChange,transformOrigin",
   });
 }
 
@@ -446,6 +454,45 @@ export function updateDragFeedback(
   y: number,
 ): void {
   gsap.set(element, { x, y, scale: 1, force3D: true });
+}
+
+export function beginListSwipeIndicator(element: HTMLElement): void {
+  const reducedMotion = prefersReducedMotion();
+  gsap.killTweensOf(element);
+  gsap.set(element, {
+    autoAlpha: 0,
+    x: reducedMotion ? 0 : 28,
+    scale: reducedMotion ? 1 : 0.96,
+    transformOrigin: "100% 50%",
+    willChange: "transform,opacity",
+  });
+}
+
+export function updateListSwipeIndicator(
+  element: HTMLElement,
+  rawProgress: number,
+): void {
+  const progress = gsap.utils.clamp(0, 1, rawProgress);
+  const reducedMotion = prefersReducedMotion();
+  gsap.set(element, {
+    autoAlpha: progress,
+    x: reducedMotion ? 0 : 28 * (1 - progress),
+    scale: reducedMotion ? 1 : 0.96 + progress * 0.04,
+    force3D: !reducedMotion,
+  });
+}
+
+export function dismissListSwipeIndicator(element: HTMLElement): void {
+  const reducedMotion = prefersReducedMotion();
+  gsap.to(element, {
+    autoAlpha: 0,
+    x: reducedMotion ? 0 : 28,
+    scale: reducedMotion ? 1 : 0.96,
+    duration: reducedMotion ? 0 : motionDurations.micro,
+    ease: motionEases.state,
+    overwrite: true,
+    onComplete: () => clearListSwipeIndicator(element),
+  });
 }
 
 export function springBack(element: HTMLElement): void {
