@@ -31,6 +31,11 @@ interface ActiveTransition {
   cleanup: () => void;
 }
 
+interface ActiveCelebration {
+  animation: gsap.core.Animation;
+  cleanup: () => void;
+}
+
 type CapturedFlipState = ReturnType<typeof Flip.getState>;
 
 const SHARED_FLIP_PROPS = [
@@ -45,7 +50,22 @@ const SHARED_FLIP_PROPS = [
 ].join(",");
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const PERSONAL_BEST_CONFETTI = [
+  { x: -76, y: -58, rotation: -110 },
+  { x: -54, y: -88, rotation: -72 },
+  { x: -28, y: -70, rotation: -38 },
+  { x: -8, y: -96, rotation: -12 },
+  { x: 18, y: -82, rotation: 24 },
+  { x: 46, y: -94, rotation: 58 },
+  { x: 72, y: -66, rotation: 96 },
+  { x: 84, y: -30, rotation: 126 },
+  { x: 62, y: -18, rotation: 148 },
+  { x: -68, y: -20, rotation: -142 },
+  { x: -42, y: -46, rotation: -86 },
+  { x: 38, y: -48, rotation: 74 },
+] as const;
 let activeTransition: ActiveTransition | null = null;
+let activeCelebration: ActiveCelebration | null = null;
 
 export function prefersReducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia(REDUCED_MOTION_QUERY).matches;
@@ -80,6 +100,14 @@ function interruptActiveTransition(): void {
   if (activeTransition === null) return;
   const previous = activeTransition;
   activeTransition = null;
+  previous.animation.kill();
+  previous.cleanup();
+}
+
+function interruptCelebration(): void {
+  if (activeCelebration === null) return;
+  const previous = activeCelebration;
+  activeCelebration = null;
   previous.animation.kill();
   previous.cleanup();
 }
@@ -382,6 +410,7 @@ export function commit(
   container?: HTMLElement,
 ): Promise<void> {
   interruptActiveTransition();
+  interruptCelebration();
 
   const mount = container ?? document.getElementById("app");
   if (mount === null) {
@@ -555,20 +584,163 @@ export function animateRowDelete(element: HTMLElement, onComplete: () => void): 
 }
 
 export function celebrate(element: HTMLElement): void {
-  if (prefersReducedMotion()) return;
-  gsap.killTweensOf(element);
-  gsap.fromTo(
-    element,
-    { scale: 0.97, transformOrigin: "left bottom" },
-    {
-      scale: 1,
-      duration: motionDurations.celebration,
-      ease: motionEases.celebration,
-      clearProps: "transform",
-    },
+  interruptCelebration();
+
+  const host = element.closest<HTMLElement>("[data-focus-card]");
+  if (host === null) return;
+  const hostRect = host.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const elementX = elementRect.left - hostRect.left;
+  const elementY = elementRect.top - hostRect.top;
+
+  const celebration = document.createElement("span");
+  celebration.className = "personal-best-celebration";
+  celebration.dataset.personalBestCelebration = "true";
+  celebration.style.setProperty(
+    "--personal-best-label-x",
+    `${Math.max(0, Math.min(elementX, hostRect.width - 84))}px`,
   );
+  celebration.style.setProperty(
+    "--personal-best-label-y",
+    `${Math.max(0, elementY - 22)}px`,
+  );
+  celebration.style.setProperty(
+    "--personal-best-origin-x",
+    `${Math.max(16, Math.min(elementX + elementRect.width / 2, hostRect.width - 16))}px`,
+  );
+  celebration.style.setProperty(
+    "--personal-best-origin-y",
+    `${Math.max(16, Math.min(elementY + elementRect.height * 0.36, hostRect.height - 16))}px`,
+  );
+
+  const announcement = document.createElement("span");
+  announcement.className = "personal-best-celebration__announcement";
+  announcement.setAttribute("role", "status");
+  announcement.setAttribute("aria-live", "polite");
+  announcement.setAttribute("aria-atomic", "true");
+  announcement.textContent = "New personal best";
+
+  const label = document.createElement("span");
+  label.className = "personal-best-celebration__label";
+  label.setAttribute("aria-hidden", "true");
+  label.textContent = "NEW BEST";
+
+  const reducedMotion = prefersReducedMotion();
+  const confetti = document.createElement("span");
+  confetti.className = "personal-best-celebration__confetti";
+  confetti.setAttribute("aria-hidden", "true");
+  const pieces = (reducedMotion ? [] : PERSONAL_BEST_CONFETTI).map(() => {
+    const piece = document.createElement("span");
+    piece.className = "personal-best-celebration__piece";
+    confetti.append(piece);
+    return piece;
+  });
+
+  celebration.append(announcement, label);
+  if (!reducedMotion) celebration.append(confetti);
+  gsap.set(label, {
+    autoAlpha: reducedMotion ? 1 : 0,
+    y: reducedMotion ? 0 : 6,
+  });
+  if (pieces.length > 0) {
+    gsap.set(pieces, {
+      autoAlpha: 1,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scale: 0.82,
+      transformOrigin: "50% 50%",
+      force3D: true,
+    });
+  }
+  host.append(celebration);
+
+  let cleaned = false;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInlineMotion(element);
+    celebration.remove();
+  };
+  const timeline = gsap.timeline({
+    paused: true,
+    onComplete: () => {
+      if (activeCelebration?.animation === timeline) activeCelebration = null;
+      cleanup();
+    },
+  });
+
+  if (reducedMotion) {
+    timeline.set(label, { autoAlpha: 0 }, 1.5);
+  } else {
+    timeline
+      .addLabel("burst", 0)
+      .fromTo(
+        element,
+        { scale: 0.97, transformOrigin: "left bottom" },
+        {
+          scale: 1,
+          duration: motionDurations.celebration,
+          ease: motionEases.celebration,
+          clearProps: "transform",
+        },
+        "burst",
+      )
+      .to(
+        label,
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: motionDurations.local,
+          ease: motionEases.state,
+        },
+        "burst",
+      )
+      .to(
+        pieces,
+        {
+          x: (index) => PERSONAL_BEST_CONFETTI[index]?.x ?? 0,
+          y: (index) => PERSONAL_BEST_CONFETTI[index]?.y ?? 0,
+          rotation: (index) => PERSONAL_BEST_CONFETTI[index]?.rotation ?? 0,
+          scale: 1,
+          duration: 0.32,
+          ease: "power3.out",
+        },
+        "burst",
+      )
+      .to(
+        pieces,
+        {
+          x: (index) => (PERSONAL_BEST_CONFETTI[index]?.x ?? 0) * 1.08,
+          y: (index) => (PERSONAL_BEST_CONFETTI[index]?.y ?? 0) + 22,
+          rotation: (index) => {
+            const vector = PERSONAL_BEST_CONFETTI[index];
+            if (vector === undefined) return 0;
+            return vector.rotation + Math.sign(vector.x) * 28;
+          },
+          autoAlpha: 0,
+          duration: 0.28,
+          ease: "power1.in",
+        },
+        "burst+=0.32",
+      )
+      .to(
+        label,
+        {
+          autoAlpha: 0,
+          y: -4,
+          duration: motionDurations.micro,
+          ease: "power2.in",
+        },
+        1.38,
+      );
+  }
+
+  activeCelebration = { animation: timeline, cleanup };
+  timeline.play();
 }
 
 export function disposeMotion(): void {
   interruptActiveTransition();
+  interruptCelebration();
 }

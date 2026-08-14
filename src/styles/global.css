@@ -639,6 +639,10 @@ p {
   touch-action: none;
 }
 
+.expanded-view {
+  position: relative;
+}
+
 .record-list-swipe-cue {
   position: absolute;
   top: 0;
@@ -711,6 +715,72 @@ p {
 
 .hero-value-wrap--compact {
   flex: none;
+}
+
+.personal-best-celebration {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.personal-best-celebration__announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.personal-best-celebration__label {
+  position: absolute;
+  top: var(--personal-best-label-y);
+  left: var(--personal-best-label-x);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+
+.personal-best-celebration__confetti {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+}
+
+.personal-best-celebration__piece {
+  position: absolute;
+  top: var(--personal-best-origin-y);
+  left: var(--personal-best-origin-x);
+  display: block;
+  width: 3px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 1px;
+  will-change: transform, opacity;
+}
+
+.personal-best-celebration__piece:nth-child(3n + 2) {
+  width: 4px;
+  height: 4px;
+  background: var(--text-primary);
+  border-radius: 50%;
+}
+
+.personal-best-celebration__piece:nth-child(3n) {
+  height: 6px;
+  background: var(--text-tertiary);
 }
 
 .stats-grid {

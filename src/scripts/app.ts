@@ -817,9 +817,9 @@ function init(): void {
   cleanups.push(() => document.removeEventListener("rec-ord:edit-entry", onEditEntry));
 
   // New personal best feedback is owned by GSAP, so repeated events can
-  // overwrite the previous tween without forcing synchronous layout.
+  // interrupt and clean up the previous celebration without layout shifts.
   const onPrPulse = (): void => {
-    const hero = document.querySelector<HTMLElement>("[data-focus-card] h1");
+    const hero = document.querySelector<HTMLElement>("[data-hero]");
     if (hero === null) return;
     celebrate(hero);
   };
