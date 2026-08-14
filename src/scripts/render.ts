@@ -591,9 +591,6 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
     ? "font-body text-sm tracking-[0.2em] uppercase text-ink-muted mt-1"
     : "font-body text-xl tracking-[0.2em] uppercase text-ink-muted mt-2";
   unit.textContent = record.unit;
-  if (!valueIncludesUnit(record.unit)) {
-    unit.dataset.flipId = `record-unit-${record.id}`;
-  }
 
   heroWrap.append(value, unit);
   return heroWrap;
@@ -1233,7 +1230,6 @@ function renderGridCell(
     const unitEl = document.createElement("span");
     unitEl.className = "ml-[0.18em]";
     unitEl.textContent = normalizedUnit(record.unit);
-    unitEl.dataset.flipId = `record-unit-${record.id}`;
     valueLine.append(unitEl);
   }
 

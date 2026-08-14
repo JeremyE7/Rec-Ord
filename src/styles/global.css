@@ -730,7 +730,7 @@ p {
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: default;
-  touch-action: none;
+  touch-action: pan-y;
   transition: background-color var(--duration-micro) var(--ease-in-out);
 }
 

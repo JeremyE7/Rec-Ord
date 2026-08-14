@@ -26,8 +26,6 @@ export const gestureMotion = {
   longPressDelay: 430,
   pressFeedbackDelay: 180,
   longPressMoveTolerance: 12,
-  pinchOutRatio: 1.16,
-  pinchInRatio: 0.86,
   maxDragDistance: 520,
   rowDeleteDistance: 72,
 } as const;

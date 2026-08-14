@@ -593,26 +593,17 @@ function openGrid(): boolean {
   return true;
 }
 
-function closeGrid(centroid?: { x: number; y: number }): boolean {
+function closeGrid(): boolean {
   const state = getState();
   if (state.view !== "grid") return false;
-  // Try to focus the cell under the pinch centroid. If none, just
-  // return to the current focus.
-  const target = centroid
-    ? findRecordIdAt(state, centroid)
-    : null;
-  const recordId = target ?? state.currentRecordId ?? state.records[0]?.id;
+  const recordId = state.currentRecordId ?? state.records[0]?.id;
   return recordId === undefined ? false : focusGridRecord(recordId);
 }
 
-function findRecordIdAt(state: AppState, point: { x: number; y: number }): string | null {
-  const elements = document.elementsFromPoint(point.x, point.y);
-  for (const el of elements) {
-    if (!(el instanceof HTMLElement)) continue;
-    const id = el.getAttribute(VIEW_ATTRS.recordId);
-    if (id !== null && state.records.some((r) => r.id === id)) return id;
-  }
-  return null;
+function handleSwipeLeft(velocity?: number): boolean {
+  return getState().view === "new"
+    ? closeNewRecord(velocity)
+    : openGrid();
 }
 
 /* ---------------------------------------------------------------------------
@@ -623,10 +614,8 @@ const gestureHandlers: GestureHandlers = {
   onSwipeUp: (v) => goToNextRecord(v),
   onSwipeDown: (v) => goToPreviousRecord(v),
   onSwipeRight: (v) => openNewRecord(v),
-  onSwipeLeft: (v) => closeNewRecord(v),
+  onSwipeLeft: (v) => handleSwipeLeft(v),
   onLongPress: () => toggleEdit(),
-  onPinchOut: () => openGrid(),
-  onPinchIn: (c) => closeGrid(c),
 };
 
 /* ---------------------------------------------------------------------------
@@ -668,7 +657,7 @@ function onKeyDown(e: KeyboardEvent): void {
       handled = openNewRecord();
       break;
     case "ArrowLeft":
-      handled = closeNewRecord();
+      handled = handleSwipeLeft();
       break;
     case "Enter":
       // Long-press equivalent — toggle edit expansion from focus.
@@ -688,7 +677,7 @@ function onKeyDown(e: KeyboardEvent): void {
     }
     case "g":
     case "G": {
-      // Toggle grid (pinch equivalent).
+      // Direct keyboard shortcut for toggling the record list.
       const state = getState();
       if (state.view === "grid") {
         handled = closeGrid();

@@ -24,8 +24,6 @@ export interface GestureHandlers {
   onSwipeRight?: (velocity?: number) => boolean | void;
   onSwipeLeft?: (velocity?: number) => boolean | void;
   onLongPress?: () => boolean | void;
-  onPinchOut?: (centroid: Point) => boolean | void;
-  onPinchIn?: (centroid: Point) => boolean | void;
 }
 
 export interface AttachOptions {
@@ -35,11 +33,6 @@ export interface AttachOptions {
   canSwipeVertical: (direction: "up" | "down") => boolean;
   root: HTMLElement;
   handlers: GestureHandlers;
-}
-
-interface Point {
-  x: number;
-  y: number;
 }
 
 interface ActivePointer {
@@ -62,8 +55,6 @@ interface GestureState {
   longPressTimer: ReturnType<typeof setTimeout> | null;
   pressTimer: ReturnType<typeof setTimeout> | null;
   pressingElement: HTMLElement | null;
-  pinchStartDistance: number | null;
-  pinchFired: boolean;
 }
 
 function createState(): GestureState {
@@ -78,27 +69,12 @@ function createState(): GestureState {
     longPressTimer: null,
     pressTimer: null,
     pressingElement: null,
-    pinchStartDistance: null,
-    pinchFired: false,
   };
 }
 
 function isInteractive(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.closest("input, textarea, select, button, a, [contenteditable='true']") !== null;
-}
-
-function pointDistance(first: ActivePointer, second: ActivePointer): number {
-  return Math.hypot(first.x - second.x, first.y - second.y);
-}
-
-function pointerCentroid(pointers: ActivePointer[]): Point {
-  if (pointers.length === 0) return { x: 0, y: 0 };
-  const total = pointers.reduce(
-    (value, pointer) => ({ x: value.x + pointer.x, y: value.y + pointer.y }),
-    { x: 0, y: 0 },
-  );
-  return { x: total.x / pointers.length, y: total.y / pointers.length };
 }
 
 function activeSurface(root: HTMLElement, view: "focus" | "new" | "grid"): HTMLElement | null {
@@ -281,46 +257,7 @@ export function attachGestures(options: AttachOptions): () => void {
     }
     state.dragging = false;
     state.axis = null;
-
-    const pointers = [...state.pointers.values()];
-    const first = pointers[0];
-    const second = pointers[1];
-    if (first !== undefined && second !== undefined) {
-      state.pinchStartDistance = pointDistance(first, second);
-      state.pinchFired = false;
-    }
-  };
-
-  const tryPinch = (): boolean => {
-    if (
-      state.pointers.size !== 2 ||
-      state.pinchStartDistance === null ||
-      state.pinchFired
-    ) {
-      return false;
-    }
-
-    const pointers = [...state.pointers.values()];
-    const first = pointers[0];
-    const second = pointers[1];
-    if (first === undefined || second === undefined) return false;
-
-    const ratio = pointDistance(first, second) / state.pinchStartDistance;
-    const center = pointerCentroid(pointers);
-
-    if (ratio >= gestureMotion.pinchOutRatio && getView() === "focus" && getHasRecords()) {
-      state.pinchFired = true;
-      if (handlers.onPinchOut?.(center) === true) haptic();
-      return true;
-    }
-
-    if (ratio <= gestureMotion.pinchInRatio && getView() === "grid") {
-      state.pinchFired = true;
-      if (handlers.onPinchIn?.(center) === true) haptic();
-      return true;
-    }
-
-    return true;
+    state.eligible = false;
   };
 
   const lockAxis = (dx: number, dy: number): void => {
@@ -335,7 +272,7 @@ export function attachGestures(options: AttachOptions): () => void {
     } else if (view === "new") {
       if (horizontal && dx < 0) state.axis = "h";
     } else if (view === "focus") {
-      if (horizontal && dx > 0) state.axis = "h";
+      if (horizontal) state.axis = "h";
       if (!horizontal) state.axis = "v";
     }
 
@@ -360,7 +297,6 @@ export function attachGestures(options: AttachOptions): () => void {
     pointer.x = event.clientX;
     pointer.y = event.clientY;
 
-    if (tryPinch()) return;
     if (!state.eligible || event.pointerId !== state.primaryId) return;
 
     const dx = pointer.x - pointer.startX;
@@ -411,11 +347,6 @@ export function attachGestures(options: AttachOptions): () => void {
     const pointer = state.pointers.get(event.pointerId);
     if (pointer === undefined) return;
     state.pointers.delete(event.pointerId);
-
-    if (state.pointers.size < 2) {
-      state.pinchStartDistance = null;
-      state.pinchFired = false;
-    }
 
     if (event.pointerId !== state.primaryId) return;
 
