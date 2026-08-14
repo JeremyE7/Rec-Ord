@@ -496,6 +496,92 @@ export function updateDragFeedback(
   gsap.set(element, { x, y, scale: 1, force3D: true });
 }
 
+export function resetDirectManipulation(element: HTMLElement): void {
+  gsap.killTweensOf(element);
+  clearInlineMotion(element);
+}
+
+export function transitionUtilityStep(
+  outgoing: HTMLElement,
+  incoming: HTMLElement,
+  direction: "left" | "right",
+): Promise<void> {
+  gsap.killTweensOf([outgoing, incoming]);
+  const offset = direction === "left" ? 20 : -20;
+  outgoing.inert = true;
+  incoming.inert = true;
+  incoming.hidden = false;
+
+  if (prefersReducedMotion()) {
+    outgoing.hidden = true;
+    outgoing.inert = false;
+    incoming.inert = false;
+    clearInlineMotion(outgoing);
+    clearInlineMotion(incoming);
+    return Promise.resolve();
+  }
+
+  gsap.set(incoming, { autoAlpha: 0, x: offset, force3D: true });
+  return new Promise((resolve) => {
+    const timeline = gsap.timeline({
+      defaults: { duration: motionDurations.local, ease: motionEases.state },
+      onComplete: () => {
+        outgoing.hidden = true;
+        outgoing.inert = false;
+        incoming.inert = false;
+        clearInlineMotion(outgoing);
+        clearInlineMotion(incoming);
+        resolve();
+      },
+    });
+    timeline
+      .to(outgoing, { autoAlpha: 0, x: -offset }, 0)
+      .to(incoming, { autoAlpha: 1, x: 0 }, 0.06);
+  });
+}
+
+export function showTransientAction(element: HTMLElement): void {
+  gsap.killTweensOf(element);
+  element.hidden = false;
+  if (prefersReducedMotion()) {
+    clearInlineMotion(element);
+    return;
+  }
+  gsap.fromTo(
+    element,
+    { autoAlpha: 0, y: 8 },
+    {
+      autoAlpha: 1,
+      y: 0,
+      duration: motionDurations.local,
+      ease: motionEases.settle,
+      overwrite: true,
+      onComplete: () => clearInlineMotion(element),
+    },
+  );
+}
+
+export function hideTransientAction(element: HTMLElement): void {
+  gsap.killTweensOf(element);
+  if (element.hidden) return;
+  const finish = (): void => {
+    element.hidden = true;
+    clearInlineMotion(element);
+  };
+  if (prefersReducedMotion()) {
+    finish();
+    return;
+  }
+  gsap.to(element, {
+    autoAlpha: 0,
+    y: 8,
+    duration: motionDurations.micro,
+    ease: "power2.in",
+    overwrite: true,
+    onComplete: finish,
+  });
+}
+
 export function beginListSwipeIndicator(element: HTMLElement): void {
   const reducedMotion = prefersReducedMotion();
   gsap.killTweensOf(element);

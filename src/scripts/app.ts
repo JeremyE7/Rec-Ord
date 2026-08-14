@@ -42,6 +42,21 @@ import {
   VIEW_ATTRS,
 } from "./render";
 import { getState, initState, setState, subscribe } from "./store";
+import {
+  archiveDeletedEntry,
+  archiveDeletedRecord,
+  DELETION_CREATED_EVENT,
+  DELETION_FAILED_EVENT,
+  getDeletedItem,
+  removeDeletedItem,
+  RESTORE_DELETED_EVENT,
+  RESTORE_DELETED_RESULT_EVENT,
+  type DeletionCreatedDetail,
+  type DeletionFailedDetail,
+  type DeletedItem,
+  type RestoreDeletedDetail,
+  type RestoreDeletedResultDetail,
+} from "./trash";
 import type { AppState, Entry, Record } from "./types";
 
 const APP_ID = "app";
@@ -57,6 +72,26 @@ function currentRecord(state: AppState): Record | null {
 
 function currentIndex(state: AppState): number {
   return state.records.findIndex((r) => r.id === state.currentRecordId);
+}
+
+function announceDeletion(item: DeletedItem): void {
+  const detail: DeletionCreatedDetail = {
+    itemId: item.id,
+    kind: item.kind,
+    message: item.kind === "record" ? "RECORD DELETED" : "ENTRY DELETED",
+  };
+  document.dispatchEvent(new CustomEvent(DELETION_CREATED_EVENT, { detail }));
+}
+
+function announceDeletionFailure(): void {
+  const detail: DeletionFailedDetail = {
+    message: "DELETE CANCELLED · RECOVERY COPY COULD NOT BE CREATED",
+  };
+  document.dispatchEvent(new CustomEvent(DELETION_FAILED_EVENT, { detail }));
+}
+
+function announceRestoreResult(detail: RestoreDeletedResultDetail): void {
+  document.dispatchEvent(new CustomEvent(RESTORE_DELETED_RESULT_EVENT, { detail }));
 }
 
 /* ---------------------------------------------------------------------------
@@ -419,6 +454,13 @@ function performDeleteRecord(): void {
   const state = getState();
   const record = currentRecord(state);
   if (record === null) return;
+  const recordIndex = currentIndex(state);
+  const deletedItem = archiveDeletedRecord(record, recordIndex);
+  if (deletedItem === null) {
+    announceDeletionFailure();
+    rerender();
+    return;
+  }
 
   // If it's the only record, the empty state is the destination.
   if (state.records.length === 1) {
@@ -431,6 +473,7 @@ function performDeleteRecord(): void {
         addingEntry: false,
       });
     }, { type: "record", direction: "up" });
+    announceDeletion(deletedItem);
     return;
   }
 
@@ -449,6 +492,7 @@ function performDeleteRecord(): void {
       addingEntry: false,
     });
   }, { type: "record", direction });
+  announceDeletion(deletedItem);
 }
 
 function deleteEntry(entryId: string): void {
@@ -461,6 +505,15 @@ function deleteEntry(entryId: string): void {
     performDeleteRecord();
     return;
   }
+  const entryIndex = record.entries.findIndex((entry) => entry.id === entryId);
+  if (entryIndex < 0) return;
+  const entry = record.entries[entryIndex];
+  if (entry === undefined) return;
+  const deletedItem = archiveDeletedEntry(record, entry, entryIndex);
+  if (deletedItem === null) {
+    announceDeletionFailure();
+    return;
+  }
   void commit(() => {
     setState((prev) => {
       const r = currentRecord(prev);
@@ -469,6 +522,94 @@ function deleteEntry(entryId: string): void {
       return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
     });
   }, { type: "fade" });
+  announceDeletion(deletedItem);
+}
+
+function restoreDeletedItem(detail: RestoreDeletedDetail): void {
+  const item = getDeletedItem(detail.itemId);
+  if (item === null) {
+    announceRestoreResult({
+      ...detail,
+      success: false,
+      message: "ITEM IS NO LONGER AVAILABLE",
+    });
+    return;
+  }
+
+  const before = getState();
+  let transition: Promise<void>;
+  if (item.kind === "record") {
+    if (before.records.some((record) => record.id === item.record.id)) {
+      announceRestoreResult({
+        ...detail,
+        success: false,
+        message: "RECORD ALREADY EXISTS",
+      });
+      return;
+    }
+    const records = [...before.records];
+    records.splice(Math.min(item.originalIndex, records.length), 0, item.record);
+    transition = commit(() => {
+      setState({
+        records,
+        currentRecordId: item.record.id,
+        view: "focus",
+        expanded: detail.source === "immediate",
+        addingEntry: false,
+      });
+    }, { type: "record", direction: "down" });
+  } else {
+    const parent = before.records.find((record) => record.id === item.recordId);
+    if (parent === undefined) {
+      announceRestoreResult({
+        ...detail,
+        success: false,
+        message: "RESTORE THE PARENT RECORD FIRST",
+      });
+      return;
+    }
+    if (parent.entries.some((entry) => entry.id === item.entry.id)) {
+      announceRestoreResult({
+        ...detail,
+        success: false,
+        message: "ENTRY ALREADY EXISTS",
+      });
+      return;
+    }
+    const entries = [...parent.entries];
+    entries.splice(Math.min(item.originalIndex, entries.length), 0, item.entry);
+    const restored: Record = { ...parent, entries: sortEntries(entries) };
+    transition = commit(() => {
+      setState({
+        records: before.records.map((record) =>
+          record.id === restored.id ? restored : record,
+        ),
+        currentRecordId: restored.id,
+        view: "focus",
+        expanded: detail.source === "immediate",
+        addingEntry: false,
+      });
+    }, { type: "fade" });
+  }
+
+  if (!flushSave()) {
+    void commit(() => setState(before), { type: "fade" });
+    flushSave();
+    announceRestoreResult({
+      ...detail,
+      success: false,
+      message: "RESTORE FAILED · ITEM KEPT",
+    });
+    return;
+  }
+
+  void transition;
+  const removed = removeDeletedItem(item.id);
+  announceRestoreResult({
+    ...detail,
+    success: true,
+    message: removed ? "ITEM RESTORED" : "ITEM RESTORED · RECOVERY COPY REMAINS",
+  });
 }
 
 /* ---------------------------------------------------------------------------
@@ -825,6 +966,14 @@ function init(): void {
   };
   document.addEventListener("rec-ord:pr-pulse", onPrPulse);
   cleanups.push(() => document.removeEventListener("rec-ord:pr-pulse", onPrPulse));
+
+  const onRestoreDeleted = (event: Event): void => {
+    const detail = (event as CustomEvent<RestoreDeletedDetail>).detail;
+    if (detail === undefined) return;
+    restoreDeletedItem(detail);
+  };
+  document.addEventListener(RESTORE_DELETED_EVENT, onRestoreDeleted);
+  cleanups.push(() => document.removeEventListener(RESTORE_DELETED_EVENT, onRestoreDeleted));
 
   // Save any pending writes before the page unloads.
   const onPageHide = (): void => {

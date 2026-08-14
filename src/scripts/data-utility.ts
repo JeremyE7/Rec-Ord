@@ -9,9 +9,13 @@ import {
 } from "./backup";
 import {
   beginDirectManipulation,
+  hideTransientAction,
   prefersReducedMotion,
+  resetDirectManipulation,
   rubberBand,
+  showTransientAction,
   springBack,
+  transitionUtilityStep,
   updateDragFeedback,
 } from "./motion";
 import {
@@ -23,7 +27,22 @@ import {
   saveLastBackupAt,
   saveRollback,
 } from "./persistence";
+import { formatValueForUnit } from "./record-utils";
 import { getState, setState } from "./store";
+import {
+  daysUntilDeletion,
+  DELETION_CREATED_EVENT,
+  DELETION_FAILED_EVENT,
+  loadTrash,
+  RESTORE_DELETED_EVENT,
+  RESTORE_DELETED_RESULT_EVENT,
+  TRASH_CHANGED_EVENT,
+  type DeletionCreatedDetail,
+  type DeletionFailedDetail,
+  type DeletedItem,
+  type RestoreDeletedDetail,
+  type RestoreDeletedResultDetail,
+} from "./trash";
 import type { PersistedState } from "./types";
 
 interface DataElements {
@@ -33,6 +52,7 @@ interface DataElements {
   content: HTMLElement;
   close: HTMLButtonElement;
   home: HTMLElement;
+  trash: HTMLElement;
   preview: HTMLElement;
   summary: HTMLElement;
   lastBackup: HTMLElement;
@@ -46,12 +66,23 @@ interface DataElements {
   previewCount: HTMLElement;
   confirmRestore: HTMLButtonElement;
   cancelRestore: HTMLButtonElement;
+  trashList: HTMLElement;
+  trashEmpty: HTMLElement;
+  trashSummary: HTMLElement;
+  hint: HTMLElement;
+  deletionNotice: HTMLElement;
+  deletionMessage: HTMLElement;
+  deletionUndo: HTMLButtonElement;
 }
 
 type StatusTone = "neutral" | "success" | "error";
+type DataStep = "home" | "preview" | "trash";
+type DragAxis = "horizontal" | "vertical";
 
 const SWIPE_LOCK_DISTANCE = 12;
 const SWIPE_CLOSE_DISTANCE = 72;
+const SWIPE_NAV_DISTANCE = 72;
+const UNDO_VISIBILITY_MS = 8_000;
 
 let controller: AbortController | null = null;
 let pendingBackup: ParsedBackup | null = null;
@@ -65,6 +96,7 @@ function collectElements(): DataElements | null {
   const content = dialog?.querySelector<HTMLElement>("[data-data-content]") ?? null;
   const close = dialog?.querySelector<HTMLButtonElement>("[data-data-close]") ?? null;
   const home = dialog?.querySelector<HTMLElement>('[data-data-step="home"]') ?? null;
+  const trash = dialog?.querySelector<HTMLElement>('[data-data-step="trash"]') ?? null;
   const preview = dialog?.querySelector<HTMLElement>('[data-data-step="preview"]') ?? null;
   const summary = dialog?.querySelector<HTMLElement>("[data-data-summary]") ?? null;
   const lastBackup = dialog?.querySelector<HTMLElement>("[data-last-backup]") ?? null;
@@ -80,6 +112,13 @@ function collectElements(): DataElements | null {
     dialog?.querySelector<HTMLButtonElement>("[data-confirm-restore]") ?? null;
   const cancelRestore =
     dialog?.querySelector<HTMLButtonElement>("[data-cancel-restore]") ?? null;
+  const trashList = dialog?.querySelector<HTMLElement>("[data-trash-list]") ?? null;
+  const trashEmpty = dialog?.querySelector<HTMLElement>("[data-trash-empty]") ?? null;
+  const trashSummary = dialog?.querySelector<HTMLElement>("[data-trash-summary]") ?? null;
+  const hint = dialog?.querySelector<HTMLElement>("[data-data-hint]") ?? null;
+  const deletionNotice = document.querySelector<HTMLElement>("[data-deletion-notice]");
+  const deletionMessage = document.querySelector<HTMLElement>("[data-deletion-message]");
+  const deletionUndo = document.querySelector<HTMLButtonElement>("[data-deletion-undo]");
 
   if (
     trigger === null ||
@@ -88,6 +127,7 @@ function collectElements(): DataElements | null {
     content === null ||
     close === null ||
     home === null ||
+    trash === null ||
     preview === null ||
     summary === null ||
     lastBackup === null ||
@@ -100,7 +140,14 @@ function collectElements(): DataElements | null {
     previewDate === null ||
     previewCount === null ||
     confirmRestore === null ||
-    cancelRestore === null
+    cancelRestore === null ||
+    trashList === null ||
+    trashEmpty === null ||
+    trashSummary === null ||
+    hint === null ||
+    deletionNotice === null ||
+    deletionMessage === null ||
+    deletionUndo === null
   ) {
     console.error("[rec-ord] DATA utility markup is incomplete");
     return null;
@@ -113,6 +160,7 @@ function collectElements(): DataElements | null {
     content,
     close,
     home,
+    trash,
     preview,
     summary,
     lastBackup,
@@ -126,6 +174,13 @@ function collectElements(): DataElements | null {
     previewCount,
     confirmRestore,
     cancelRestore,
+    trashList,
+    trashEmpty,
+    trashSummary,
+    hint,
+    deletionNotice,
+    deletionMessage,
+    deletionUndo,
   };
 }
 
@@ -168,15 +223,111 @@ function initializeDataUtility(): void {
   const { signal } = controller;
   const elements = collectElements();
   if (elements === null) return;
+  let activeStep: DataStep = "home";
+  let trashCount = 0;
+  let immediateItemId: string | null = null;
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   const setStatus = (message: string, tone: StatusTone = "neutral"): void => {
     elements.status.textContent = message;
     elements.status.dataset.tone = tone;
   };
 
-  const showStep = (step: "home" | "preview"): void => {
+  const updateHint = (): void => {
+    let hint: string;
+    if (activeStep === "trash") {
+      hint = "SWIPE RIGHT · DATA";
+    } else if (activeStep === "home" && trashCount > 0) {
+      hint = "SWIPE LEFT · RECENTLY DELETED";
+    } else {
+      hint = "SWIPE DOWN TO CLOSE";
+    }
+    if (elements.hint.textContent !== hint) elements.hint.textContent = hint;
+  };
+
+  const showStep = (step: DataStep): void => {
+    activeStep = step;
     elements.home.hidden = step !== "home";
+    elements.trash.hidden = step !== "trash";
     elements.preview.hidden = step !== "preview";
+    updateHint();
+  };
+
+  const entryValue = (item: Extract<DeletedItem, { kind: "entry" }>): string => {
+    const unit = item.recordUnit.trim().toUpperCase();
+    const value = formatValueForUnit(item.entry.value, unit);
+    return ["HRS", "MIN", "SEC"].includes(unit) ? value : `${value} ${unit}`;
+  };
+
+  const refreshTrash = (): void => {
+    const items = loadTrash();
+    const state = getState();
+    trashCount = items.length;
+    elements.trashList.replaceChildren();
+    elements.trashEmpty.hidden = items.length > 0;
+    elements.trashSummary.textContent = items.length === 0
+      ? "NOTHING IS WAITING FOR RECOVERY"
+      : `${plural(items.length, "ITEM")} · KEPT FOR 30 DAYS`;
+
+    for (const item of items) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "deleted-item";
+      wrapper.setAttribute("role", "listitem");
+
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "deleted-item__restore";
+      restore.dataset.restoreDeleted = item.id;
+
+      const copy = document.createElement("span");
+      copy.className = "deleted-item__copy";
+      const kind = document.createElement("span");
+      kind.className = "deleted-item__kind";
+      kind.textContent = item.kind.toUpperCase();
+      const title = document.createElement("strong");
+      title.className = "deleted-item__title";
+      title.textContent = item.kind === "record"
+        ? item.record.name
+        : entryValue(item);
+      const meta = document.createElement("small");
+      meta.className = "deleted-item__meta";
+      const days = daysUntilDeletion(item);
+      meta.textContent = item.kind === "record"
+        ? `${plural(item.record.entries.length, "ENTRY", "ENTRIES")} · ${plural(days, "DAY")} LEFT`
+        : `${item.recordName} · ${item.entry.date} · ${plural(days, "DAY")} LEFT`;
+      copy.append(kind, title, meta);
+
+      const action = document.createElement("span");
+      action.className = "deleted-item__action";
+      let canRestore = true;
+      if (item.kind === "record") {
+        if (state.records.some((record) => record.id === item.record.id)) {
+          canRestore = false;
+          action.textContent = "ALREADY RESTORED";
+        }
+      } else {
+        const parent = state.records.find((record) => record.id === item.recordId);
+        if (parent === undefined) {
+          canRestore = false;
+          action.textContent = "RESTORE RECORD FIRST";
+        } else if (parent.entries.some((entry) => entry.id === item.entry.id)) {
+          canRestore = false;
+          action.textContent = "ALREADY RESTORED";
+        }
+      }
+      if (canRestore) action.textContent = "RESTORE";
+      restore.disabled = !canRestore || busy;
+      restore.setAttribute(
+        "aria-label",
+        canRestore
+          ? `Restore ${item.kind === "record" ? item.record.name : entryValue(item)}`
+          : action.textContent,
+      );
+      restore.append(copy, action);
+      wrapper.append(restore);
+      elements.trashList.append(wrapper);
+    }
+    updateHint();
   };
 
   const refreshOverview = (): void => {
@@ -196,6 +347,7 @@ function initializeDataUtility(): void {
     elements.restore.disabled = busy;
     elements.undo.hidden = loadRollback() === null;
     elements.undo.disabled = busy;
+    refreshTrash();
   };
 
   const setBusy = (value: boolean): void => {
@@ -207,7 +359,63 @@ function initializeDataUtility(): void {
   };
 
   const resetSurfaceMotion = (): void => {
-    elements.surface.removeAttribute("style");
+    resetDirectManipulation(elements.surface);
+    resetDirectManipulation(elements.content);
+  };
+
+  const clearNoticeTimer = (): void => {
+    if (noticeTimer === null) return;
+    clearTimeout(noticeTimer);
+    noticeTimer = null;
+  };
+
+  const hideDeletionNotice = (): void => {
+    clearNoticeTimer();
+    immediateItemId = null;
+    hideTransientAction(elements.deletionNotice);
+  };
+
+  const showDeletionNotice = (
+    message: string,
+    itemId: string | null,
+    duration = UNDO_VISIBILITY_MS,
+  ): void => {
+    clearNoticeTimer();
+    immediateItemId = itemId;
+    elements.deletionUndo.hidden = itemId === null;
+    elements.deletionUndo.disabled = false;
+    showTransientAction(elements.deletionNotice);
+    elements.deletionMessage.textContent = message;
+    noticeTimer = setTimeout(hideDeletionNotice, duration);
+  };
+
+  const navigateStep = async (
+    target: Extract<DataStep, "home" | "trash">,
+    focusDestination = false,
+  ): Promise<void> => {
+    if (busy || activeStep === target || activeStep === "preview") return;
+    if (target === "trash" && trashCount === 0) return;
+    const outgoing = activeStep === "home" ? elements.home : elements.trash;
+    const incoming = target === "home" ? elements.home : elements.trash;
+    setBusy(true);
+    await transitionUtilityStep(
+      outgoing,
+      incoming,
+      target === "trash" ? "left" : "right",
+    );
+    activeStep = target;
+    setBusy(false);
+    updateHint();
+    if (focusDestination) {
+      if (target === "trash") {
+        const firstRestore = elements.trashList.querySelector<HTMLButtonElement>(
+          "button:not(:disabled)",
+        );
+        (firstRestore ?? elements.close).focus();
+      } else {
+        (elements.backup.disabled ? elements.restore : elements.backup).focus();
+      }
+    }
   };
 
   const closeDialog = (): void => {
@@ -359,6 +567,63 @@ function initializeDataUtility(): void {
     (elements.backup.disabled ? elements.restore : elements.backup).focus();
   };
 
+  const requestDeletedRestore = (
+    itemId: string,
+    source: RestoreDeletedDetail["source"],
+  ): void => {
+    const detail: RestoreDeletedDetail = { itemId, source };
+    document.dispatchEvent(new CustomEvent(RESTORE_DELETED_EVENT, { detail }));
+  };
+
+  const onTrashClick = (event: MouseEvent): void => {
+    if (busy || !(event.target instanceof Element)) return;
+    const restore = event.target.closest<HTMLButtonElement>("[data-restore-deleted]");
+    if (restore === null || restore.disabled) return;
+    const itemId = restore.dataset.restoreDeleted;
+    if (itemId === undefined) return;
+    setBusy(true);
+    setStatus("RESTORING ITEM");
+    requestDeletedRestore(itemId, "trash");
+  };
+
+  const onDeletionCreated = (event: Event): void => {
+    const detail = (event as CustomEvent<DeletionCreatedDetail>).detail;
+    if (detail === undefined) return;
+    showDeletionNotice(detail.message, detail.itemId);
+    refreshOverview();
+  };
+
+  const onDeletionFailed = (event: Event): void => {
+    const detail = (event as CustomEvent<DeletionFailedDetail>).detail;
+    if (detail === undefined) return;
+    showDeletionNotice(detail.message, null, 5_000);
+  };
+
+  const onDeletedRestoreResult = (event: Event): void => {
+    const detail = (event as CustomEvent<RestoreDeletedResultDetail>).detail;
+    if (detail === undefined) return;
+    refreshOverview();
+    if (detail.source === "immediate") {
+      if (detail.success) {
+        hideDeletionNotice();
+      } else {
+        showDeletionNotice(detail.message, detail.itemId);
+      }
+      return;
+    }
+
+    setBusy(false);
+    setStatus(detail.message, detail.success ? "success" : "error");
+    const nextRestore = elements.trashList.querySelector<HTMLButtonElement>(
+      "button:not(:disabled)",
+    );
+    (nextRestore ?? elements.close).focus();
+  };
+
+  const onTrashChanged = (): void => {
+    refreshOverview();
+  };
+
   elements.trigger.addEventListener("click", openDialog, { signal });
   elements.trigger.addEventListener("keydown", (event) => event.stopPropagation(), {
     signal,
@@ -369,6 +634,13 @@ function initializeDataUtility(): void {
   elements.undo.addEventListener("click", undoRestore, { signal });
   elements.file.addEventListener("change", () => void onRestoreFile(), { signal });
   elements.confirmRestore.addEventListener("click", confirmRestore, { signal });
+  elements.trashList.addEventListener("click", onTrashClick, { signal });
+  elements.deletionUndo.addEventListener("click", () => {
+    if (immediateItemId === null) return;
+    elements.deletionUndo.disabled = true;
+    elements.deletionMessage.textContent = "RESTORING ITEM";
+    requestDeletedRestore(immediateItemId, "immediate");
+  }, { signal });
   elements.cancelRestore.addEventListener("click", () => {
     pendingBackup = null;
     showStep("home");
@@ -376,6 +648,14 @@ function initializeDataUtility(): void {
     refreshOverview();
     elements.restore.focus();
   }, { signal });
+
+  document.addEventListener(DELETION_CREATED_EVENT, onDeletionCreated, { signal });
+  document.addEventListener(DELETION_FAILED_EVENT, onDeletionFailed, { signal });
+  document.addEventListener(RESTORE_DELETED_RESULT_EVENT, onDeletedRestoreResult, {
+    signal,
+  });
+  document.addEventListener(TRASH_CHANGED_EVENT, onTrashChanged, { signal });
+  signal.addEventListener("abort", clearNoticeTimer, { once: true });
 
   elements.dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
@@ -388,40 +668,69 @@ function initializeDataUtility(): void {
     returnFocus?.focus({ preventScroll: true });
     returnFocus = null;
   }, { signal });
+  let suppressDialogClick = false;
+  elements.dialog.addEventListener("click", (event) => {
+    if (suppressDialogClick) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      suppressDialogClick = false;
+      return;
+    }
+  }, { signal, capture: true });
   elements.dialog.addEventListener("click", (event) => event.stopPropagation(), {
     signal,
   });
-  elements.dialog.addEventListener("keydown", (event) => event.stopPropagation(), {
-    signal,
-  });
+  elements.dialog.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (busy || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "ArrowLeft" && activeStep === "home" && trashCount > 0) {
+      event.preventDefault();
+      void navigateStep("trash", true);
+    } else if (event.key === "ArrowRight" && activeStep === "trash") {
+      event.preventDefault();
+      void navigateStep("home", true);
+    }
+  }, { signal });
 
   let pointerId: number | null = null;
   let startX = 0;
   let startY = 0;
+  let latestX = 0;
   let latestY = 0;
   let dragging = false;
   let eligible = false;
+  let canCloseVertically = false;
+  let dragAxis: DragAxis | null = null;
+  let dragTarget: HTMLElement | null = null;
 
   const resetPointer = (): void => {
     pointerId = null;
+    latestX = 0;
     latestY = 0;
     dragging = false;
     eligible = false;
+    canCloseVertically = false;
+    dragAxis = null;
+    dragTarget = null;
   };
 
   elements.dialog.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
     if (busy || (event.pointerType === "mouse" && event.button !== 0)) return;
-    if (!(event.target instanceof HTMLElement)) return;
+    if (!(event.target instanceof Element)) return;
 
-    const interactive = event.target.closest("button, input, a, [contenteditable='true']");
+    const excluded = event.target.closest(
+      "input, a, [contenteditable='true'], [data-data-close]",
+    );
     const scrollRegion = event.target.closest<HTMLElement>("[data-data-content]");
-    eligible = interactive === null && (scrollRegion === null || scrollRegion.scrollTop <= 0);
+    eligible = excluded === null;
     if (!eligible) return;
+    canCloseVertically = scrollRegion === null || scrollRegion.scrollTop <= 0;
 
     pointerId = event.pointerId;
     startX = event.clientX;
     startY = event.clientY;
+    latestX = 0;
     latestY = 0;
     dragging = false;
   }, { signal });
@@ -433,42 +742,79 @@ function initializeDataUtility(): void {
     const dy = event.clientY - startY;
     if (!dragging) {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_LOCK_DISTANCE) return;
-      if (dy <= 0 || Math.abs(dy) <= Math.abs(dx)) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        dragAxis = "horizontal";
+        dragTarget = elements.content;
+      } else if (dy > 0 && canCloseVertically) {
+        dragAxis = "vertical";
+        dragTarget = elements.surface;
+      } else {
         eligible = false;
         return;
       }
       dragging = true;
-      beginDirectManipulation(elements.surface);
+      suppressDialogClick = true;
+      beginDirectManipulation(dragTarget);
       try {
-        elements.surface.setPointerCapture(event.pointerId);
+        dragTarget.setPointerCapture(event.pointerId);
       } catch {
         // Pointer capture is optional.
       }
     }
 
     event.preventDefault();
+    latestX = dx;
     latestY = dy;
-    updateDragFeedback(elements.surface, 0, rubberBand(dy));
+    if (dragAxis === "horizontal") {
+      updateDragFeedback(elements.content, rubberBand(dx), 0);
+    } else {
+      updateDragFeedback(elements.surface, 0, rubberBand(dy));
+    }
   }, { signal });
 
   const finishPointer = (event: PointerEvent, allowClose: boolean): void => {
     event.stopPropagation();
     if (pointerId !== event.pointerId) return;
     if (dragging) {
-      if (allowClose && latestY >= SWIPE_CLOSE_DISTANCE) {
-        closeDialog();
-      } else if (prefersReducedMotion()) {
-        resetSurfaceMotion();
+      if (dragAxis === "vertical") {
+        if (allowClose && latestY >= SWIPE_CLOSE_DISTANCE) {
+          closeDialog();
+        } else if (prefersReducedMotion()) {
+          resetDirectManipulation(elements.surface);
+        } else {
+          springBack(elements.surface);
+        }
       } else {
-        springBack(elements.surface);
+        const navigateToTrash =
+          allowClose &&
+          activeStep === "home" &&
+          trashCount > 0 &&
+          latestX <= -SWIPE_NAV_DISTANCE;
+        const navigateToHome =
+          allowClose &&
+          activeStep === "trash" &&
+          latestX >= SWIPE_NAV_DISTANCE;
+        if (navigateToTrash || navigateToHome) {
+          resetDirectManipulation(elements.content);
+          void navigateStep(navigateToTrash ? "trash" : "home");
+        } else if (prefersReducedMotion()) {
+          resetDirectManipulation(elements.content);
+        } else {
+          springBack(elements.content);
+        }
       }
     }
     try {
-      if (elements.surface.hasPointerCapture(event.pointerId)) {
-        elements.surface.releasePointerCapture(event.pointerId);
+      if (dragTarget?.hasPointerCapture(event.pointerId)) {
+        dragTarget.releasePointerCapture(event.pointerId);
       }
     } catch {
       // The browser may have released capture already.
+    }
+    if (dragging) {
+      window.setTimeout(() => {
+        suppressDialogClick = false;
+      }, 0);
     }
     resetPointer();
   };

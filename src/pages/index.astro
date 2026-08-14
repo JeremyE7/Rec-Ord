@@ -90,6 +90,22 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
           </div>
         </section>
 
+        <section class="data-step" data-data-step="trash" hidden>
+          <div class="data-preview">
+            <span class="data-overview__label">LOCAL RECOVERY</span>
+            <h2>Recently deleted</h2>
+            <p data-trash-summary>ITEMS ARE KEPT FOR 30 DAYS</p>
+            <p class="data-preview__warning">
+              Restore an item to return it to its original record and position.
+            </p>
+          </div>
+
+          <div class="deleted-items" data-trash-list role="list"></div>
+          <p class="deleted-items__empty" data-trash-empty hidden>
+            NOTHING RECENTLY DELETED
+          </p>
+        </section>
+
         <section class="data-step" data-data-step="preview" hidden>
           <div class="data-preview">
             <span class="data-overview__label">RESTORE PREVIEW</span>
@@ -125,7 +141,9 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
         <p class="data-dialog__status" data-data-status role="status" aria-live="polite"></p>
       </div>
 
-      <p class="data-dialog__hint">SWIPE DOWN TO CLOSE</p>
+      <p class="data-dialog__hint" data-data-hint aria-live="polite">
+        SWIPE DOWN TO CLOSE
+      </p>
       <input
         type="file"
         accept="application/json,.json"
@@ -134,6 +152,19 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
       />
     </div>
   </dialog>
+
+  <aside
+    class="deletion-undo"
+    data-deletion-notice
+    aria-live="polite"
+    aria-atomic="true"
+    hidden
+  >
+    <span class="deletion-undo__message" data-deletion-message>ITEM DELETED</span>
+    <button type="button" class="deletion-undo__action" data-deletion-undo>
+      UNDO
+    </button>
+  </aside>
 </BaseLayout>
 
 <script>

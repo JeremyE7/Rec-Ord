@@ -436,6 +436,100 @@ p {
   stroke-linejoin: round;
 }
 
+.deleted-items {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.deleted-item {
+  border-bottom: 1px solid var(--line);
+}
+
+.deleted-item__restore {
+  appearance: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  min-height: 86px;
+  padding: 16px 4px;
+  color: var(--text-primary);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-in-out);
+}
+
+.deleted-item__restore:hover:not(:disabled) {
+  background: rgba(250, 204, 21, 0.035);
+}
+
+.deleted-item__restore:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.deleted-item__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.deleted-item__kind,
+.deleted-item__meta,
+.deleted-item__action {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.deleted-item__kind,
+.deleted-item__meta {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deleted-item__title {
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  letter-spacing: -0.015em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deleted-item__action {
+  max-width: 16ch;
+  color: var(--accent);
+  text-align: right;
+}
+
+.deleted-item__restore:disabled .deleted-item__action {
+  color: var(--text-secondary);
+}
+
+.deleted-items__empty {
+  padding-block: 32px;
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-align: center;
+}
+
+.deleted-items__empty[hidden] {
+  display: none;
+}
+
 .data-preview {
   display: flex;
   flex-direction: column;
@@ -492,6 +586,56 @@ p {
   font-weight: 600;
   letter-spacing: 0.16em;
   text-align: center;
+}
+
+.deletion-undo {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: max(16px, env(safe-area-inset-left));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: min(100% - 32px, 480px);
+  min-height: 56px;
+  margin-inline: auto;
+  padding: 10px 12px 10px 18px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.deletion-undo[hidden] {
+  display: none;
+}
+
+.deletion-undo__message {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+}
+
+.deletion-undo__action {
+  min-width: 64px;
+  min-height: 44px;
+  padding-inline: 10px;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.deletion-undo__action[hidden] {
+  display: none;
 }
 
 .app-view {
