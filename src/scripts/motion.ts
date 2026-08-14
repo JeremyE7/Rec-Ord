@@ -219,6 +219,7 @@ function animateSharedLayout(
   newElement: HTMLElement,
   state: CapturedFlipState,
   previousSharedIds: ReadonlySet<string>,
+  absoluteTargets: boolean,
 ): Promise<void> {
   const sharedTargets = sharedElements(newElement).filter((element) => {
     const id = element.dataset.flipId;
@@ -226,10 +227,9 @@ function animateSharedLayout(
   });
   if (sharedTargets.length === 0) return animateLocalChange(mount, newElement);
 
-  // Keep the destination in its final document flow from the first frame.
-  // A temporary shield hides every non-shared element while matching shared
-  // targets animate above it. Matching semantic text nodes let Flip interpolate
-  // position and typography directly without clone scaling or a final swap.
+  // Keep the destination mounted in its final layout from the first frame. A
+  // temporary shield hides every non-shared element while matching semantic
+  // text nodes animate above it without clone scaling or a final DOM swap.
   const wasInert = newElement.inert;
   const shield = createRevealShield(mount);
   const restoreOverflow = exposeSharedOverflow(sharedTargets, newElement);
@@ -242,7 +242,12 @@ function animateSharedLayout(
 
   const timeline = Flip.from(state, {
     targets: sharedTargets,
-    absolute: false,
+    // Grid transitions swap differently styled text nodes. Keeping those
+    // targets in flow lets source typography reflow the destination row before
+    // Flip's first frame. Absolute targets preserve the captured source
+    // geometry; the reveal shield keeps the settled grid layout hidden until
+    // Flip restores the targets. Expand transitions keep their existing flow.
+    absolute: absoluteTargets,
     nested: true,
     scale: false,
     fade: false,
@@ -406,7 +411,13 @@ export function commit(
   if (spec.type === "expand" || spec.type === "grid") {
     return flipState === null
       ? animateLocalChange(mount, newElement)
-      : animateSharedLayout(mount, newElement, flipState, oldSharedIds);
+      : animateSharedLayout(
+          mount,
+          newElement,
+          flipState,
+          oldSharedIds,
+          spec.type === "grid",
+        );
   }
 
   if (spec.type === "fade") {
