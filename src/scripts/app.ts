@@ -82,11 +82,6 @@ function filteredRecords(state: AppState): Record[] {
   return state.records.filter((r) => (r.tags ?? []).includes(f));
 }
 
-function filteredIndex(state: AppState): number {
-  const list = filteredRecords(state);
-  return list.findIndex((r) => r.id === state.currentRecordId);
-}
-
 function announceDeletion(item: DeletedItem): void {
   const detail: DeletionCreatedDetail = {
     itemId: item.id,
