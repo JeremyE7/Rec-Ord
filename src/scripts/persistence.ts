@@ -32,6 +32,7 @@ function isPersistedState(value: unknown): value is PersistedState {
       unit?: unknown;
       entries?: unknown;
       direction?: unknown;
+      tags?: unknown;
     };
     if (typeof rec.id !== "string") return false;
     if (typeof rec.name !== "string") return false;
@@ -40,6 +41,10 @@ function isPersistedState(value: unknown): value is PersistedState {
     // `direction` is optional; when present it must be "up", "down", or null.
     if (rec.direction !== undefined && rec.direction !== null) {
       if (rec.direction !== "up" && rec.direction !== "down") return false;
+    }
+    if (rec.tags !== undefined) {
+      if (!Array.isArray(rec.tags)) return false;
+      for (const t of rec.tags) if (typeof t !== "string") return false;
     }
   }
   return true;
@@ -65,24 +70,43 @@ export function loadState(): PersistedState | null {
   }
 }
 
+function normalizeTags(tags: unknown): string[] | undefined {
+  if (!Array.isArray(tags)) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags) {
+    if (typeof raw !== "string") continue;
+    const t = raw.trim().toUpperCase();
+    if (t === "" || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 5) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** Coerces a loaded PersistedState to runtime-safe shape (entries sorted, ids valid). */
 export function normalize(loaded: PersistedState | null): PersistedState {
   if (loaded === null) return { records: [], currentRecordId: null };
   // Re-sort each record's entries newest-first by date. A corrupt entry that
   // can't be parsed is dropped silently.
   const records = loaded.records
-    .map((r) => ({
-      ...r,
-      entries: [...r.entries]
-        .filter(
-          (e): e is { id: string; value: number; date: string; note?: string } =>
-            typeof e?.id === "string" &&
-            typeof e?.value === "number" &&
-            Number.isFinite(e.value) &&
-            typeof e?.date === "string",
-        )
-        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
-    }))
+    .map((r) => {
+      const normalizedTags = normalizeTags((r as { tags?: unknown }).tags);
+      return {
+        ...r,
+        ...(normalizedTags ? { tags: normalizedTags } : { tags: undefined }),
+        entries: [...r.entries]
+          .filter(
+            (e): e is { id: string; value: number; date: string; note?: string } =>
+              typeof e?.id === "string" &&
+              typeof e?.value === "number" &&
+              Number.isFinite(e.value) &&
+              typeof e?.date === "string",
+          )
+          .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+      };
+    })
     // Drop records that lost all their entries (they have nothing to show).
     .filter((r) => r.entries.length > 0);
 

@@ -123,11 +123,47 @@ export function makeEntry(value: number, date: string, id?: string): Entry {
   return { id: id ?? crypto.randomUUID(), value, date };
 }
 
+export function normalizeTags(tags: unknown): string[] | undefined {
+  if (!Array.isArray(tags)) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags) {
+    if (typeof raw !== "string") continue;
+    const t = raw.trim().toUpperCase();
+    if (t === "" || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 5) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+export function parseTagsInput(raw: string): string[] | undefined {
+  if (raw.trim() === "") return undefined;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s !== "");
+  return normalizeTags(parts);
+}
+
+export function getAllTags(records: readonly Record[]): string[] {
+  const seen = new Set<string>();
+  for (const r of records) {
+    for (const t of r.tags ?? []) {
+      const n = t.trim().toUpperCase();
+      if (n !== "" && !seen.has(n)) seen.add(n);
+    }
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
 export function makeRecord(
   name: string,
   unit: string,
   firstEntry: Entry,
   direction?: "up" | "down" | null,
+  tags?: string[] | undefined,
 ): Record {
   const record: Record = {
     id: crypto.randomUUID(),
@@ -140,6 +176,8 @@ export function makeRecord(
   if (direction === "up" || direction === "down") {
     record.direction = direction;
   }
+  const normalized = normalizeTags(tags);
+  if (normalized) record.tags = normalized;
 
   return record;
 }

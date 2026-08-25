@@ -34,6 +34,7 @@ export interface Record {
   entries: Entry[]; // newest entry at index 0 (sorted by date desc on write)
   createdAt: string; // ISO timestamp; used to order records (newest first)
   direction?: Direction; // optional goal direction (default: null = neutral)
+  tags?: string[]; // optional muscle/purpose tags, normalized UPPER (max 5)
 }
 
 /** The top-level view the app is showing. */
@@ -51,6 +52,7 @@ export interface AppState {
   view: View;
   expanded: boolean; // long-press edit expansion of the current focus card
   addingEntry: boolean; // whether the inline "+ new entry" form is open inside edit
+  activeTagFilter?: string | null; // transient grid filter; null = no filter (not persisted)
 }
 
 /** The shape that is actually persisted to localStorage. */

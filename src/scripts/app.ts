@@ -31,7 +31,9 @@ import {
   latestEntry,
   makeEntry,
   makeRecord,
+  parseTagsInput,
   sortEntries,
+  todayISO,
 } from "./record-utils";
 import {
   armDeleteConfirm,
@@ -72,6 +74,17 @@ function currentRecord(state: AppState): Record | null {
 
 function currentIndex(state: AppState): number {
   return state.records.findIndex((r) => r.id === state.currentRecordId);
+}
+
+function filteredRecords(state: AppState): Record[] {
+  const f = state.activeTagFilter ?? null;
+  if (f === null || f === "") return state.records;
+  return state.records.filter((r) => (r.tags ?? []).includes(f));
+}
+
+function filteredIndex(state: AppState): number {
+  const list = filteredRecords(state);
+  return list.findIndex((r) => r.id === state.currentRecordId);
 }
 
 function announceDeletion(item: DeletedItem): void {
@@ -153,6 +166,21 @@ function wire(root: HTMLElement): void {
   const newEntryToggle = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`);
   if (newEntryToggle !== null) {
     newEntryToggle.addEventListener("click", onNewEntryToggleClick);
+  }
+
+  const repeatBtn = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.repeatEntry}]`);
+  if (repeatBtn !== null) {
+    repeatBtn.addEventListener("click", onRepeatEntryClick);
+  }
+
+  const tagFilterBtns = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.tagFilter}]`);
+  tagFilterBtns.forEach((btn) => {
+    btn.addEventListener("click", onTagFilterClick);
+  });
+
+  const tagsForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.tagsForm}]`);
+  if (tagsForm !== null) {
+    tagsForm.addEventListener("submit", onTagsSubmit);
   }
 
   // DELETE RECORD two-tap
@@ -286,7 +314,8 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   if (!Number.isFinite(value)) return;
 
   const firstEntry: Entry = makeEntry(value, date);
-  const record: Record = makeRecord(name, unit, firstEntry, direction);
+  const tags = parseTagsInput(String(data.get("tags") ?? ""));
+  const record: Record = makeRecord(name, unit, firstEntry, direction, tags);
   // New records go to the front (most recently created at index 0).
   void commit(() => {
     setState((prev) => ({
@@ -342,6 +371,68 @@ function onAddEntrySubmit(e: SubmitEvent): void {
       }
     }
   }
+}
+
+function onRepeatEntryClick(): void {
+  const state = getState();
+  const record = currentRecord(state);
+  if (record === null) return;
+  const latest = latestEntry(record);
+  if (latest === null) return;
+  const newEntry: Entry = makeEntry(latest.value, todayISO());
+  const transition = commit(() => {
+    setState((prev) => {
+      const r = currentRecord(prev);
+      if (r === null) return prev;
+      const newEntries = sortEntries([newEntry, ...r.entries]);
+      const updated: Record = { ...r, entries: newEntries };
+      return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
+    });
+  }, { type: "fade" });
+  const updatedRecord = currentRecord(getState());
+  if (updatedRecord !== null) {
+    const newLatest = latestEntry(updatedRecord);
+    if (newLatest !== null && newLatest.id === newEntry.id) {
+      if (isNewBest(updatedRecord, newEntry.id, newEntry.value)) {
+        void transition.then(() => {
+          document.dispatchEvent(new CustomEvent("rec-ord:pr-pulse"));
+        });
+      }
+    }
+  }
+}
+
+function onTagFilterClick(e: MouseEvent): void {
+  const btn = e.currentTarget as HTMLButtonElement;
+  const tag = btn.getAttribute(VIEW_ATTRS.tagFilter) ?? "";
+  const next = tag === "" ? null : tag.toUpperCase();
+  const state = getState();
+  const visible = next === null ? state.records : state.records.filter((r) => (r.tags ?? []).includes(next));
+  // If the current record is not in the filtered set, jump to first filtered record.
+  const shouldJump = visible.length > 0 && (state.currentRecordId === null || !visible.some((r) => r.id === state.currentRecordId));
+  void commit(() => {
+    setState({
+      activeTagFilter: next,
+      ...(shouldJump ? { currentRecordId: visible[0]!.id, view: "focus" as const, expanded: false, addingEntry: false } : {}),
+      ...(next !== null && visible.length > 0 && state.view === "grid" ? {} : {}),
+    });
+  }, { type: "fade" });
+  // If we are in grid, stay in grid to show filtered list; if we jumped, the grid will re-render filtered.
+}
+
+function onTagsSubmit(e: SubmitEvent): void {
+  e.preventDefault();
+  const form = e.currentTarget as HTMLFormElement;
+  const recordId = form.dataset.recordId;
+  if (recordId === undefined) return;
+  const data = new FormData(form);
+  const raw = String(data.get("tags") ?? "");
+  const parsed = parseTagsInput(raw);
+  void commit(() => {
+    setState((prev) => ({
+      records: prev.records.map((r) => (r.id === recordId ? { ...r, tags: parsed } : r)),
+    }));
+  }, { type: "fade" });
 }
 
 function onEditEntrySubmit(e: SubmitEvent): void {
@@ -625,8 +716,16 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
 function goToNextRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded) return false;
-  const idx = currentIndex(state);
-  const next = state.records[idx + 1];
+  const list = filteredRecords(state);
+  const idx = list.findIndex((r) => r.id === state.currentRecordId);
+  if (idx === -1) {
+    if (list.length === 0) return false;
+    void commit(() => {
+      setState({ currentRecordId: list[0]!.id });
+    }, { type: "record", direction: "up", velocity });
+    return true;
+  }
+  const next = list[idx + 1];
   if (!next) return false; // last/oldest — spring back
   void commit(() => {
     setState({ currentRecordId: next.id });
@@ -653,8 +752,16 @@ function goToPreviousRecord(velocity?: number): boolean {
     }, { type: "expand", direction: "out" });
     return true;
   }
-  const idx = currentIndex(state);
-  const prev = state.records[idx - 1];
+  const list = filteredRecords(state);
+  const idx = list.findIndex((r) => r.id === state.currentRecordId);
+  if (idx === -1) {
+    if (list.length === 0) return false;
+    void commit(() => {
+      setState({ currentRecordId: list[list.length - 1]!.id });
+    }, { type: "record", direction: "down", velocity });
+    return true;
+  }
+  const prev = list[idx - 1];
   if (!prev) return false; // first/newest — spring back
   void commit(() => {
     setState({ currentRecordId: prev.id });
@@ -881,6 +988,7 @@ function init(): void {
     view: "focus",
     expanded: false,
     addingEntry: false,
+    activeTagFilter: null,
   };
   initState(initial);
 
@@ -909,14 +1017,15 @@ function init(): void {
     canSwipeVertical: (direction) => {
       const state = getState();
       if (state.view !== "focus") return false;
-      const idx = currentIndex(state);
+      const list = filteredRecords(state);
+      const idx = list.findIndex((r) => r.id === state.currentRecordId);
       if (direction === "up") {
-        // Swiping up goes to the next (older) record.
-        return state.records[idx + 1] !== undefined;
+        // Swiping up goes to the next (older) record within filtered set.
+        return list[idx + 1] !== undefined;
       }
       // Swiping down goes to the previous (newer) record, or collapses.
       if (state.expanded) return true; // swipe down always valid when expanded
-      return state.records[idx - 1] !== undefined;
+      return list[idx - 1] !== undefined;
     },
     handlers: gestureHandlers,
   });

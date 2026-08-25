@@ -19,6 +19,7 @@ import {
   formatDelta,
   formatRelativeDate,
   formatValueForUnit,
+  getAllTags,
   latestEntry,
   previousEntry,
   todayISO,
@@ -284,6 +285,91 @@ export function renderSparkline(
   return svg;
 }
 
+function renderTagPills(tags: readonly string[], variant: "muted" | "filter" = "muted"): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = variant === "filter" ? "tag-filter" : "tag-pills";
+  for (const tag of tags) {
+    const pill = document.createElement("span");
+    pill.className = variant === "filter" ? "tag-pill tag-pill--filter" : "tag-pill";
+    pill.textContent = tag;
+    wrap.append(pill);
+  }
+  return wrap;
+}
+
+function renderGridFilter(state: AppState): HTMLElement | null {
+  const all = getAllTags(state.records);
+  if (all.length === 0) return null;
+  const bar = document.createElement("div");
+  bar.className = "tag-filter-bar";
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", "Filter by tag");
+  const active = state.activeTagFilter ?? null;
+
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.textContent = "ALL";
+  allBtn.dataset.tagFilter = "";
+  allBtn.className = active === null ? "tag-filter-pill tag-filter-pill--active" : "tag-filter-pill";
+  allBtn.setAttribute("aria-pressed", String(active === null));
+  bar.append(allBtn);
+
+  for (const tag of all) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = tag;
+    btn.dataset.tagFilter = tag;
+    const isActive = active === tag;
+    btn.className = isActive ? "tag-filter-pill tag-filter-pill--active" : "tag-filter-pill";
+    btn.setAttribute("aria-pressed", String(isActive));
+    bar.append(btn);
+  }
+  return bar;
+}
+
+function renderExpandedTags(record: Record): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "expanded-tags";
+  wrap.dataset.motionLayer = "details";
+
+  const label = document.createElement("span");
+  label.className = "form-field__label";
+  label.textContent = "TAGS";
+  wrap.append(label);
+
+  if (record.tags && record.tags.length > 0) {
+    wrap.append(renderTagPills(record.tags, "muted"));
+  } else {
+    const empty = document.createElement("span");
+    empty.className = "tag-pills__empty";
+    empty.textContent = "NO TAGS — TAP TO ADD";
+    wrap.append(empty);
+  }
+
+  const form = document.createElement("form");
+  form.dataset.tagsForm = "true";
+  form.dataset.recordId = record.id;
+  form.className = "expanded-tags__form";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.name = "tags";
+  input.autocomplete = "off";
+  input.placeholder = "CHEST, PUSH";
+  input.value = (record.tags ?? []).join(", ");
+  input.className = "field-input field-input--compact uppercase";
+  input.setAttribute("aria-label", "Edit tags comma separated");
+
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "button button--ghost button--compact";
+  save.textContent = "SAVE TAGS";
+
+  form.append(input, save);
+  wrap.append(form);
+  return wrap;
+}
+
 /* ---------------------------------------------------------------------------
  * Empty state
  * ------------------------------------------------------------------------- */
@@ -418,6 +504,7 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
     inner.append(renderHero(record, latest, true));
     const prev = previousEntry(record);
     if (prev !== null) inner.append(renderStats(record, latest, prev));
+    inner.append(renderExpandedTags(record));
   } else {
     // === Top area: context + trend indicator + sparkline ==========
     // Uses the top margin space that was empty in the previous
@@ -448,6 +535,9 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
       className: "text-accent opacity-50 w-full",
     });
     top.append(sparkline);
+    if (record.tags && record.tags.length > 0) {
+      top.append(renderTagPills(record.tags, "muted"));
+    }
 
     inner.append(top);
 
@@ -727,12 +817,28 @@ function renderFocusExpandedSection(
   if (state.addingEntry) {
     addWrap.append(renderInlineAddEntryForm(record));
   } else {
+    const actions = document.createElement("div");
+    actions.className = "entry-composer__actions";
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "button button--primary button--compact";
     toggle.textContent = "ADD ENTRY";
     toggle.dataset.newEntryToggle = "true";
-    addWrap.append(toggle);
+    actions.append(toggle);
+
+    if (record.entries.length > 0) {
+      const latestForRepeat = latestEntry(record);
+      if (latestForRepeat !== null) {
+        const repeat = document.createElement("button");
+        repeat.type = "button";
+        repeat.className = "button button--ghost button--compact";
+        repeat.textContent = `REPEAT ${formatValueWithUnit(latestForRepeat.value, record.unit)}`;
+        repeat.dataset.repeatEntry = "true";
+        repeat.setAttribute("aria-label", `Repeat last entry ${formatValueWithUnit(latestForRepeat.value, record.unit)}`);
+        actions.append(repeat);
+      }
+    }
+    addWrap.append(actions);
   }
   expandedWrap.append(addWrap, list);
 
@@ -1148,12 +1254,20 @@ function renderNewRecord(): HTMLElement {
     renderField("START DATE", dateInput),
   );
 
+  const tagsInput = document.createElement("input");
+  tagsInput.type = "text";
+  tagsInput.name = "tags";
+  tagsInput.autocomplete = "off";
+  tagsInput.placeholder = "CHEST, PUSH";
+  tagsInput.className = "field-input uppercase";
+  const tagsField = renderField("TAGS", tagsInput, "Optional · comma separated · max 5");
+
   const footer = document.createElement("div");
   footer.className = "record-form__footer";
   footer.dataset.motionLayer = "footer";
   footer.append(submit);
 
-  form.append(intro, essentials, presetsGroup, details, directionGroup);
+  form.append(intro, essentials, presetsGroup, details, tagsField, directionGroup);
   section.append(header, form, footer);
   return section;
 }
@@ -1181,18 +1295,36 @@ function renderGrid(state: AppState): HTMLElement {
   heading.append(eyebrow, title);
   header.append(heading);
 
+  const filterBar = renderGridFilter(state);
+  if (filterBar !== null) {
+    section.append(header, filterBar);
+  } else {
+    section.append(header);
+  }
+
+  const activeFilter = state.activeTagFilter ?? null;
+  const visibleRecords = activeFilter
+    ? state.records.filter((r) => (r.tags ?? []).includes(activeFilter))
+    : state.records;
+
   const grid = document.createElement("div");
   grid.className = "records-list app-surface";
 
-  const records = state.records;
-  records.forEach((record, i) => {
-    const isLast = i === records.length - 1;
-    grid.append(
-      renderGridCell(record, record.id === state.currentRecordId, isLast),
-    );
-  });
+  if (visibleRecords.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "grid-empty";
+    empty.textContent = activeFilter ? `NO RECORDS FOR ${activeFilter}` : "NO RECORDS";
+    grid.append(empty);
+  } else {
+    visibleRecords.forEach((record, i) => {
+      const isLast = i === visibleRecords.length - 1;
+      grid.append(
+        renderGridCell(record, record.id === state.currentRecordId, isLast),
+      );
+    });
+  }
 
-  section.append(header, grid);
+  section.append(grid);
   return section;
 }
 
@@ -1243,6 +1375,18 @@ function renderGridCell(
     dateLine.textContent = "—";
   }
   left.append(dateLine);
+
+  if (record.tags && record.tags.length > 0) {
+    const tags = document.createElement("div");
+    tags.className = "tag-pills tag-pills--grid";
+    for (const t of record.tags) {
+      const pill = document.createElement("span");
+      pill.className = "tag-pill tag-pill--compact";
+      pill.textContent = t;
+      tags.append(pill);
+    }
+    left.append(tags);
+  }
 
   // Right side: value + unit (big, yellow, display font — the hero)
   // + delta (small, accent, tabular nums) + a thin trend sparkline
@@ -1318,4 +1462,7 @@ export const VIEW_ATTRS = {
   unitPreset: "data-unit-preset",
   direction: "data-direction",
   entryEditForm: "data-entry-edit-form",
+  repeatEntry: "data-repeat-entry",
+  tagFilter: "data-tag-filter",
+  tagsForm: "data-tags-form",
 } as const;
