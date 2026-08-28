@@ -839,9 +839,8 @@ p {
 .record-summary--expanded {
   flex: none;
   gap: 12px;
-  max-height: 34%;
   padding: 10px 2px 14px;
-  overflow: hidden;
+  overflow: visible;
   touch-action: none;
 }
 
@@ -1382,10 +1381,13 @@ p {
   flex-wrap: nowrap;
   gap: 8px;
   width: 100%;
+  max-width: 100%;
   padding: 2px 2px 8px;
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+  touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1472,7 +1474,7 @@ p {
   }
 
   .record-summary--expanded {
-    max-height: 31%;
+    max-height: none;
   }
 
   .form-grid,
@@ -1527,7 +1529,7 @@ p {
   }
 
   .record-summary--expanded {
-    max-height: 28%;
+    max-height: none;
     padding-block: 4px 8px;
   }
 }
