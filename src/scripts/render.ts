@@ -376,7 +376,7 @@ function renderExpandedTags(record: Record): HTMLElement {
 
 function renderEmpty(): HTMLElement {
   const section = document.createElement("section");
-  section.className = "empty-state";
+  section.className = "empty-state app-view focus-view";
   section.dataset.focusCard = "true";
 
   const eyebrow = document.createElement("p");
