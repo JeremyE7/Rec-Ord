@@ -13,6 +13,7 @@
     "preview": "astro preview",
     "astro": "astro",
     "lint": "eslint .",
+    "test:unit": "vitest run",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm typecheck && pnpm lint"
@@ -32,6 +33,7 @@
     "sharp": "^0.35.2",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.62.1"
+    "typescript-eslint": "^8.62.1",
+    "vitest": "^5.0.0"
   }
 }

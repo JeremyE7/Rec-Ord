@@ -35,6 +35,37 @@ export interface Record {
   createdAt: string; // ISO timestamp; used to order records (newest first)
   direction?: Direction; // optional goal direction (default: null = neutral)
   tags?: string[]; // optional muscle/purpose tags, normalized UPPER (max 5)
+  quickStep?: number; // optional increment used by the quick-value entry controls
+}
+
+/** A reusable set of records that is suggested on specific weekdays. */
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface RoutineProfile {
+  id: string;
+  name: string;
+  weekdays: Weekday[];
+  tags: string[];
+  recordIds: string[]; // optional explicit order; tag matches still add records
+}
+
+/** A date-specific routine selection. `routineId: null` means rest/all records. */
+export interface RoutineOverride {
+  date: string;
+  routineId: string | null;
+}
+
+export interface RoutineConfig {
+  profiles: RoutineProfile[];
+  overrides: RoutineOverride[];
+}
+
+/** Ephemeral capture queue; entries themselves remain the durable source of truth. */
+export interface CaptureSession {
+  routineId: string;
+  date: string;
+  recordIds: string[];
+  currentIndex: number;
 }
 
 /** The top-level view the app is showing. */
@@ -49,14 +80,18 @@ export type View = "focus" | "new" | "grid";
 export interface AppState {
   records: Record[]; // ordered newest-record-first (records[0] = most recently created)
   currentRecordId: string | null; // which record is in focus; null when 0 records
+  routineConfig: RoutineConfig; // durable routine definitions and date overrides
   view: View;
   expanded: boolean; // long-press edit expansion of the current focus card
   addingEntry: boolean; // whether the inline "+ new entry" form is open inside edit
   activeTagFilter?: string | null; // transient grid filter; null = no filter (not persisted)
+  activeRoutineId: string | null; // transient routine filter; null = all records
+  captureSession: CaptureSession | null; // transient LOG TODAY queue
 }
 
 /** The shape that is actually persisted to localStorage. */
 export interface PersistedState {
   records: Record[];
   currentRecordId: string | null;
+  routineConfig: RoutineConfig; // normalized; legacy payloads are upgraded on load
 }

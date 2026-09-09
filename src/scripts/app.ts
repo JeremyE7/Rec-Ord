@@ -31,10 +31,19 @@ import {
   latestEntry,
   makeEntry,
   makeRecord,
+  normalizeQuickStep,
   parseTagsInput,
   sortEntries,
   todayISO,
 } from "./record-utils";
+import {
+  advanceCaptureSession,
+  captureSessionRecordId,
+  createCaptureSession,
+  recordsForRoutine,
+  routineById,
+  routineForDate,
+} from "./routines";
 import {
   armDeleteConfirm,
   consumeDeleteConfirm,
@@ -77,9 +86,20 @@ function currentIndex(state: AppState): number {
 }
 
 function filteredRecords(state: AppState): Record[] {
-  const f = state.activeTagFilter ?? null;
-  if (f === null || f === "") return state.records;
-  return state.records.filter((r) => (r.tags ?? []).includes(f));
+  const tagFilter = state.activeTagFilter ?? null;
+  if (tagFilter !== null && tagFilter !== "") {
+    return state.records.filter((r) => (r.tags ?? []).includes(tagFilter));
+  }
+  const routine = routineById(state.routineConfig, state.activeRoutineId);
+  return routine === null ? state.records : recordsForRoutine(state.records, routine);
+}
+
+function currentRoutine(state: AppState): ReturnType<typeof routineById> {
+  return routineById(state.routineConfig, state.activeRoutineId);
+}
+
+function todayRoutine(state: AppState): ReturnType<typeof routineForDate> {
+  return routineForDate(state.routineConfig, todayISO());
 }
 
 function announceDeletion(item: DeletedItem): void {
@@ -173,9 +193,43 @@ function wire(root: HTMLElement): void {
     btn.addEventListener("click", onTagFilterClick);
   });
 
+  const routineFilterBtns = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.routineFilter}]`,
+  );
+  routineFilterBtns.forEach((btn) => {
+    btn.addEventListener("click", onRoutineFilterClick);
+  });
+
+  const routineOpen = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.routineOpen}]`);
+  if (routineOpen !== null) {
+    routineOpen.addEventListener("click", () => {
+      document.dispatchEvent(new CustomEvent("rec-ord:open-routines"));
+    });
+  }
+
+  const startRoutine = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.startRoutine}]`);
+  if (startRoutine !== null) {
+    startRoutine.addEventListener("click", onStartRoutineClick);
+  }
+
+  const skipCapture = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.skipCapture}]`);
+  if (skipCapture !== null) {
+    skipCapture.addEventListener("click", onSkipCaptureClick);
+  }
+
+  const quickValueBtns = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.quickValue}]`);
+  quickValueBtns.forEach((btn) => {
+    btn.addEventListener("click", onQuickValueClick);
+  });
+
   const tagsForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.tagsForm}]`);
   if (tagsForm !== null) {
     tagsForm.addEventListener("submit", onTagsSubmit);
+  }
+
+  const quickStepForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.quickStepForm}]`);
+  if (quickStepForm !== null) {
+    quickStepForm.addEventListener("submit", onQuickStepSubmit);
   }
 
   // DELETE RECORD two-tap
@@ -300,6 +354,7 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   const valueRaw = data.get("value");
   const unit = String(data.get("unit") ?? "").trim().toUpperCase();
   const date = String(data.get("date") ?? "");
+  const quickStepRaw = String(data.get("quickStep") ?? "").trim();
   // Direction is stored in a hidden input. Empty string = no preference.
   const directionRaw = String(data.get("direction") ?? "");
   const direction: "up" | "down" | null =
@@ -307,10 +362,14 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   if (name === "" || unit === "" || date === "" || valueRaw === null) return;
   const value = Number(valueRaw);
   if (!Number.isFinite(value)) return;
+  const quickStep = quickStepRaw === "" ? undefined : normalizeQuickStep(Number(quickStepRaw));
+  if (quickStepRaw !== "" && quickStep === undefined) return;
 
   const firstEntry: Entry = makeEntry(value, date);
-  const tags = parseTagsInput(String(data.get("tags") ?? ""));
-  const record: Record = makeRecord(name, unit, firstEntry, direction, tags);
+  const selectedTags = parseTagsInput(String(data.get("tags") ?? ""));
+  const routine = currentRoutine(getState()) ?? todayRoutine(getState());
+  const tags = selectedTags ?? routine?.tags;
+  const record: Record = makeRecord(name, unit, firstEntry, direction, tags, quickStep);
   // New records go to the front (most recently created at index 0).
   void commit(() => {
     setState((prev) => ({
@@ -319,6 +378,7 @@ function onNewRecordSubmit(e: SubmitEvent): void {
       view: "focus",
       expanded: false,
       addingEntry: false,
+      captureSession: null,
     }));
   }, { type: "panel", direction: "out" });
 }
@@ -333,6 +393,16 @@ function onAddEntrySubmit(e: SubmitEvent): void {
   const value = Number(valueRaw);
   if (!Number.isFinite(value)) return;
 
+  const before = getState();
+  const recordBefore = currentRecord(before);
+  if (recordBefore === null) return;
+  const session = before.captureSession;
+  const sessionRecordId = captureSessionRecordId(session);
+  const isSessionEntry = session !== null && sessionRecordId === recordBefore.id;
+  const nextSession = isSessionEntry ? advanceCaptureSession(session) : session;
+  const nextRecordId = isSessionEntry ? captureSessionRecordId(nextSession) : null;
+  const continueSession = isSessionEntry && nextRecordId !== null;
+
   // Build the entry up front so we can reference its id after the
   // state update (for the PR-pulse check below).
   const newEntry: Entry = makeEntry(value, date);
@@ -345,17 +415,28 @@ function onAddEntrySubmit(e: SubmitEvent): void {
       const updated: Record = { ...record, entries: newEntries };
       return {
         records: prev.records.map((r) => (r.id === record.id ? updated : r)),
-        addingEntry: false,
+        currentRecordId: continueSession ? nextRecordId : record.id,
+        expanded: continueSession ? true : isSessionEntry ? false : prev.expanded,
+        addingEntry: continueSession,
+        captureSession: isSessionEntry ? nextSession : prev.captureSession,
       };
     });
   }, { type: "fade" });
+
+  if (continueSession) {
+    void transition.then(() => {
+      document.querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+      )?.focus({ preventScroll: true });
+    });
+  }
 
   // PR pulse: if the new entry (now the latest, because it has today's
   // date in 99% of cases, and sortEntries puts it there regardless)
   // strictly beats every other entry in the record's direction, flash
   // the hero. No pulse when the record has no direction, when this was
   // the first entry, or when the value merely ties the previous best.
-  const updatedRecord = currentRecord(getState());
+  const updatedRecord = getState().records.find((record) => record.id === recordBefore.id) ?? null;
   if (updatedRecord !== null) {
     const newLatest = latestEntry(updatedRecord);
     if (newLatest !== null && newLatest.id === newEntry.id) {
@@ -408,11 +489,106 @@ function onTagFilterClick(e: MouseEvent): void {
   void commit(() => {
     setState({
       activeTagFilter: next,
+      activeRoutineId: null,
       ...(shouldJump ? { currentRecordId: visible[0]!.id, view: "focus" as const, expanded: false, addingEntry: false } : {}),
       ...(next !== null && visible.length > 0 && state.view === "grid" ? {} : {}),
     });
   }, { type: "fade" });
   // If we are in grid, stay in grid to show filtered list; if we jumped, the grid will re-render filtered.
+}
+
+function onRoutineFilterClick(e: MouseEvent): void {
+  const btn = e.currentTarget as HTMLButtonElement;
+  const routineId = btn.getAttribute(VIEW_ATTRS.routineFilter);
+  if (routineId === null) return;
+  const state = getState();
+  const routine = routineById(state.routineConfig, routineId);
+  if (routine === null) return;
+  const visible = recordsForRoutine(state.records, routine);
+  const shouldJump =
+    visible.length > 0 &&
+    (state.currentRecordId === null || !visible.some((record) => record.id === state.currentRecordId));
+
+  void commit(() => {
+    setState({
+      activeRoutineId: routine.id,
+      activeTagFilter: null,
+      captureSession: null,
+      ...(shouldJump
+        ? {
+            currentRecordId: visible[0]!.id,
+            view: "grid" as const,
+            expanded: false,
+            addingEntry: false,
+          }
+        : {}),
+    });
+  }, { type: "fade" });
+}
+
+function onStartRoutineClick(): void {
+  const state = getState();
+  const routine = currentRoutine(state) ?? todayRoutine(state);
+  if (routine === null) return;
+
+  const session = createCaptureSession(state.records, routine, todayISO());
+  const firstRecordId = captureSessionRecordId(session);
+  if (firstRecordId === null) return;
+
+  const transition = commit(() => {
+    setState({
+      activeRoutineId: routine.id,
+      activeTagFilter: null,
+      captureSession: session,
+      currentRecordId: firstRecordId,
+      view: "focus",
+      expanded: true,
+      addingEntry: true,
+    });
+  }, { type: "record", direction: "down" });
+
+  void transition.then(() => {
+    document.querySelector<HTMLInputElement>(
+      `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+    )?.focus({ preventScroll: true });
+  });
+}
+
+function onSkipCaptureClick(): void {
+  const state = getState();
+  const session = state.captureSession;
+  if (session === null || captureSessionRecordId(session) !== state.currentRecordId) return;
+  const nextSession = advanceCaptureSession(session);
+  const nextRecordId = captureSessionRecordId(nextSession);
+  const continueSession = nextRecordId !== null;
+
+  const transition = commit(() => {
+    setState({
+      captureSession: nextSession,
+      currentRecordId: continueSession ? nextRecordId : state.currentRecordId,
+      expanded: continueSession,
+      addingEntry: continueSession,
+    });
+  }, { type: "record", direction: "up" });
+
+  if (continueSession) {
+    void transition.then(() => {
+      document.querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+      )?.focus({ preventScroll: true });
+    });
+  }
+}
+
+function onQuickValueClick(e: MouseEvent): void {
+  const btn = e.currentTarget as HTMLButtonElement;
+  const value = Number(btn.getAttribute(VIEW_ATTRS.quickValue));
+  if (!Number.isFinite(value)) return;
+  const form = btn.closest("form");
+  const input = form?.querySelector<HTMLInputElement>('input[name="value"]');
+  if (input === undefined || input === null) return;
+  input.value = String(value);
+  input.focus({ preventScroll: true });
 }
 
 function onTagsSubmit(e: SubmitEvent): void {
@@ -426,6 +602,27 @@ function onTagsSubmit(e: SubmitEvent): void {
   void commit(() => {
     setState((prev) => ({
       records: prev.records.map((r) => (r.id === recordId ? { ...r, tags: parsed } : r)),
+    }));
+  }, { type: "fade" });
+}
+
+function onQuickStepSubmit(e: SubmitEvent): void {
+  e.preventDefault();
+  const form = e.currentTarget as HTMLFormElement;
+  const recordId = form.dataset.recordId;
+  if (recordId === undefined) return;
+  const data = new FormData(form);
+  const raw = String(data.get("quickStep") ?? "").trim();
+  const quickStep = raw === "" ? undefined : normalizeQuickStep(Number(raw));
+  if (raw !== "" && quickStep === undefined) return;
+
+  void commit(() => {
+    setState((prev) => ({
+      records: prev.records.map((record) =>
+        record.id === recordId
+          ? { ...record, ...(quickStep === undefined ? { quickStep: undefined } : { quickStep }) }
+          : record,
+      ),
     }));
   }, { type: "fade" });
 }
@@ -557,6 +754,7 @@ function performDeleteRecord(): void {
         view: "focus",
         expanded: false,
         addingEntry: false,
+        captureSession: null,
       });
     }, { type: "record", direction: "up" });
     announceDeletion(deletedItem);
@@ -576,6 +774,7 @@ function performDeleteRecord(): void {
       view: "focus",
       expanded: false,
       addingEntry: false,
+      captureSession: null,
     });
   }, { type: "record", direction });
   announceDeletion(deletedItem);
@@ -642,6 +841,7 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
         view: "focus",
         expanded: detail.source === "immediate",
         addingEntry: false,
+        captureSession: null,
       });
     }, { type: "record", direction: "down" });
   } else {
@@ -674,6 +874,7 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
         view: "focus",
         expanded: detail.source === "immediate",
         addingEntry: false,
+        captureSession: null,
       });
     }, { type: "fade" });
   }
@@ -743,7 +944,7 @@ function goToPreviousRecord(velocity?: number): boolean {
     // Collapse edit.
     setEditingEntryId(null);
     void commit(() => {
-      setState({ expanded: false, addingEntry: false });
+      setState({ expanded: false, addingEntry: false, captureSession: null });
     }, { type: "expand", direction: "out" });
     return true;
   }
@@ -771,7 +972,7 @@ function openNewRecord(velocity?: number): boolean {
   // by the gesture handler so the only way out is swipe-down.
   if (state.view !== "focus" || state.expanded) return false;
   void commit(() => {
-    setState({ view: "new" });
+    setState({ view: "new", captureSession: null });
   }, { type: "panel", direction: "in", velocity });
   return true;
 }
@@ -780,7 +981,7 @@ function closeNewRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "new") return false;
   void commit(() => {
-    setState({ view: "focus" });
+    setState({ view: "focus", captureSession: null });
   }, { type: "panel", direction: "out", velocity });
   return true;
 }
@@ -800,7 +1001,7 @@ function collapseEdit(): boolean {
   if (!state.expanded) return false;
   setEditingEntryId(null);
   void commit(() => {
-    setState({ expanded: false, addingEntry: false });
+    setState({ expanded: false, addingEntry: false, captureSession: null });
   }, { type: "expand", direction: "out" });
   return true;
 }
@@ -816,6 +1017,7 @@ function focusGridRecord(recordId: string): boolean {
       currentRecordId: recordId,
       expanded: false,
       addingEntry: false,
+      captureSession: null,
     });
   }, { type: "grid", direction: "in" });
   return true;
@@ -830,8 +1032,14 @@ function onGridRecordClick(event: MouseEvent): void {
 function openGrid(): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded || state.records.length === 0) return false;
+  const routine = todayRoutine(state);
   void commit(() => {
-    setState({ view: "grid" });
+    setState({
+      view: "grid",
+      activeRoutineId: routine?.id ?? null,
+      activeTagFilter: null,
+      captureSession: null,
+    });
   }, { type: "grid", direction: "out" });
   return true;
 }
@@ -980,10 +1188,13 @@ function init(): void {
   const initial: AppState = {
     records: loaded.records,
     currentRecordId: loaded.currentRecordId,
+    routineConfig: loaded.routineConfig,
     view: "focus",
     expanded: false,
     addingEntry: false,
     activeTagFilter: null,
+    activeRoutineId: null,
+    captureSession: null,
   };
   initState(initial);
 
@@ -1033,7 +1244,7 @@ function init(): void {
   // Persist + perform the plain DOM update on every state change. View
   // actions wrap their mutation in `commit`, which owns the animation.
   const unsub = subscribe((state) => {
-    saveState(state.records, state.currentRecordId);
+    saveState(state.records, state.currentRecordId, state.routineConfig);
     updateDOM();
   });
   cleanups.push(unsub);

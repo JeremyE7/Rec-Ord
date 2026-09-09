@@ -138,6 +138,13 @@ export function normalizeTags(tags: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+export function normalizeQuickStep(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.min(value, 1_000_000);
+}
+
 export function parseTagsInput(raw: string): string[] | undefined {
   if (raw.trim() === "") return undefined;
   const parts = raw
@@ -164,6 +171,7 @@ export function makeRecord(
   firstEntry: Entry,
   direction?: "up" | "down" | null,
   tags?: string[] | undefined,
+  quickStep?: number,
 ): Record {
   const record: Record = {
     id: crypto.randomUUID(),
@@ -178,6 +186,8 @@ export function makeRecord(
   }
   const normalized = normalizeTags(tags);
   if (normalized) record.tags = normalized;
+  const normalizedQuickStep = normalizeQuickStep(quickStep);
+  if (normalizedQuickStep !== undefined) record.quickStep = normalizedQuickStep;
 
   return record;
 }

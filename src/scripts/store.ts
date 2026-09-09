@@ -19,9 +19,12 @@ const listeners = new Set<Listener>();
 let state: AppState = {
   records: [],
   currentRecordId: null,
+  routineConfig: { profiles: [], overrides: [] },
   view: "focus",
   expanded: false,
   addingEntry: false,
+  activeRoutineId: null,
+  captureSession: null,
 };
 
 export function getState(): AppState {

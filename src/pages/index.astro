@@ -90,6 +90,68 @@ import BackgroundGlow from "../components/BackgroundGlow.astro";
           </div>
         </section>
 
+        <section class="data-step routines-step" data-data-step="routines" hidden>
+          <div class="data-preview">
+            <span class="data-overview__label">WEEKLY ROUTINES</span>
+            <h2>Make today obvious.</h2>
+            <p class="data-preview__warning">
+              Set the records that belong together. Rec-Ord will surface them on their
+              scheduled days and keep the rest out of the way.
+            </p>
+          </div>
+
+          <div class="routine-manager">
+            <div class="routine-manager__header">
+              <div class="routine-manager__heading">
+                <span class="data-overview__label">SAVED ROUTINES</span>
+                <p class="routine-manager__hint">Tags match any listed muscle or purpose.</p>
+              </div>
+              <button type="button" class="button button--ghost button--compact" data-routine-add>
+                ADD ROUTINE
+              </button>
+            </div>
+            <div class="routine-list" data-routine-list role="list"></div>
+            <p class="routine-list__empty" data-routine-empty hidden>
+              NO ROUTINES YET · ADD ONE TO START
+            </p>
+          </div>
+
+          <form class="routine-override" data-routine-override>
+            <div class="routine-override__heading">
+              <span class="data-overview__label">DATE OVERRIDE</span>
+              <p class="routine-manager__hint">Use this when today does not follow the weekly plan.</p>
+            </div>
+            <div class="form-grid form-grid--compact">
+              <label class="form-field form-field--compact">
+                <span class="form-field__label">DATE</span>
+                <input
+                  class="field-input field-input--compact tabular-nums scheme-dark"
+                  type="date"
+                  data-routine-override-date
+                  required
+                />
+              </label>
+              <label class="form-field form-field--compact">
+                <span class="form-field__label">PLAN</span>
+                <select class="field-input field-input--compact" data-routine-override-select></select>
+              </label>
+            </div>
+            <button
+              type="submit"
+              class="button button--primary button--compact"
+              data-routine-override-save
+            >
+              SAVE DATE
+            </button>
+          </form>
+
+          <div class="routine-step__footer">
+            <button type="button" class="button button--ghost button--compact" data-routine-back>
+              BACK TO DATA
+            </button>
+          </div>
+        </section>
+
         <section class="data-step" data-data-step="trash" hidden>
           <div class="data-preview">
             <span class="data-overview__label">LOCAL RECOVERY</span>

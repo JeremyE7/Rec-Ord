@@ -9,10 +9,14 @@
  * multiple state changes during a swipe-release).
  */
 
-import type { PersistedState } from "./types";
+import { normalizeQuickStep } from "./record-utils";
+import { emptyRoutineConfig, normalizeRoutineConfig } from "./routines";
+import type { PersistedState, RoutineConfig } from "./types";
 
-const STORAGE_KEY = "rec-ord:state:v1";
-const ROLLBACK_KEY = "rec-ord:rollback:v1";
+const STORAGE_KEY = "rec-ord:state:v2";
+const LEGACY_STORAGE_KEY = "rec-ord:state:v1";
+const ROLLBACK_KEY = "rec-ord:rollback:v2";
+const LEGACY_ROLLBACK_KEY = "rec-ord:rollback:v1";
 const LAST_BACKUP_KEY = "rec-ord:last-backup:v1";
 const DEBOUNCE_MS = 200;
 
@@ -21,6 +25,12 @@ function isPersistedState(value: unknown): value is PersistedState {
   const v = value as Partial<PersistedState>;
   if (!Array.isArray(v.records)) return false;
   if (v.currentRecordId !== null && typeof v.currentRecordId !== "string") {
+    return false;
+  }
+  if (
+    v.routineConfig !== undefined &&
+    (typeof v.routineConfig !== "object" || v.routineConfig === null)
+  ) {
     return false;
   }
   // Light shape check on each record — a corrupt entry should not crash the app.
@@ -33,6 +43,7 @@ function isPersistedState(value: unknown): value is PersistedState {
       entries?: unknown;
       direction?: unknown;
       tags?: unknown;
+      quickStep?: unknown;
     };
     if (typeof rec.id !== "string") return false;
     if (typeof rec.name !== "string") return false;
@@ -42,10 +53,18 @@ function isPersistedState(value: unknown): value is PersistedState {
     if (rec.direction !== undefined && rec.direction !== null) {
       if (rec.direction !== "up" && rec.direction !== "down") return false;
     }
-    if (rec.tags !== undefined) {
-      if (!Array.isArray(rec.tags)) return false;
-      for (const t of rec.tags) if (typeof t !== "string") return false;
-    }
+      if (rec.tags !== undefined) {
+        if (!Array.isArray(rec.tags)) return false;
+        for (const t of rec.tags) if (typeof t !== "string") return false;
+      }
+      if (
+        rec.quickStep !== undefined &&
+        (typeof rec.quickStep !== "number" ||
+          !Number.isFinite(rec.quickStep) ||
+          rec.quickStep <= 0)
+      ) {
+        return false;
+      }
   }
   return true;
 }
@@ -54,9 +73,13 @@ function isPersistedState(value: unknown): value is PersistedState {
  *  malformed JSON or storage errors. */
 export function loadState(): PersistedState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     if (raw === null) {
-      return { records: [], currentRecordId: null };
+      return {
+        records: [],
+        currentRecordId: null,
+        routineConfig: emptyRoutineConfig(),
+      };
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isPersistedState(parsed)) {
@@ -87,7 +110,13 @@ function normalizeTags(tags: unknown): string[] | undefined {
 
 /** Coerces a loaded PersistedState to runtime-safe shape (entries sorted, ids valid). */
 export function normalize(loaded: PersistedState | null): PersistedState {
-  if (loaded === null) return { records: [], currentRecordId: null };
+  if (loaded === null) {
+    return {
+      records: [],
+      currentRecordId: null,
+      routineConfig: emptyRoutineConfig(),
+    };
+  }
   // Re-sort each record's entries newest-first by date. A corrupt entry that
   // can't be parsed is dropped silently.
   const records = loaded.records
@@ -96,6 +125,9 @@ export function normalize(loaded: PersistedState | null): PersistedState {
       return {
         ...r,
         ...(normalizedTags ? { tags: normalizedTags } : { tags: undefined }),
+        ...(normalizeQuickStep((r as { quickStep?: unknown }).quickStep) !== undefined
+          ? { quickStep: normalizeQuickStep((r as { quickStep?: unknown }).quickStep) }
+          : { quickStep: undefined }),
         entries: [...r.entries]
           .filter(
             (e): e is { id: string; value: number; date: string; note?: string } =>
@@ -116,7 +148,11 @@ export function normalize(loaded: PersistedState | null): PersistedState {
       ? loaded.currentRecordId
       : (records[0]?.id ?? null);
 
-  return { records, currentRecordId };
+  return {
+    records,
+    currentRecordId,
+    routineConfig: normalizeRoutineConfig(loaded.routineConfig),
+  };
 }
 
 /* ---------------------------------------------------------------------------
@@ -137,7 +173,7 @@ export function saveRollback(state: PersistedState): boolean {
 /** Returns the pre-restore snapshot when it is still valid. */
 export function loadRollback(): PersistedState | null {
   try {
-    const raw = sessionStorage.getItem(ROLLBACK_KEY);
+    const raw = sessionStorage.getItem(ROLLBACK_KEY) ?? sessionStorage.getItem(LEGACY_ROLLBACK_KEY);
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!isPersistedState(parsed)) {
@@ -154,6 +190,7 @@ export function loadRollback(): PersistedState | null {
 export function clearRollback(): void {
   try {
     sessionStorage.removeItem(ROLLBACK_KEY);
+    sessionStorage.removeItem(LEGACY_ROLLBACK_KEY);
   } catch (err) {
     console.error("[rec-ord] failed to clear restore rollback:", err);
   }
@@ -195,6 +232,7 @@ function flush(): boolean {
   saveTimer = null;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     return true;
   } catch (err) {
     console.error("[rec-ord] failed to save state:", err);
@@ -203,8 +241,12 @@ function flush(): boolean {
 }
 
 /** Schedules a debounced save. Coalesces multiple calls within DEBOUNCE_MS. */
-export function saveState(records: PersistedState["records"], currentRecordId: string | null): void {
-  pendingState = { records, currentRecordId };
+export function saveState(
+  records: PersistedState["records"],
+  currentRecordId: string | null,
+  routineConfig: RoutineConfig,
+): void {
+  pendingState = { records, currentRecordId, routineConfig };
   if (saveTimer !== null) return;
   saveTimer = setTimeout(flush, DEBOUNCE_MS);
 }

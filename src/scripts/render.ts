@@ -14,7 +14,7 @@
  * navigation and screen readers work without extra effort.
  */
 
-import type { AppState, Entry, Record, View } from "./types";
+import type { AppState, Entry, Record, RoutineProfile, View } from "./types";
 import {
   formatDelta,
   formatRelativeDate,
@@ -24,6 +24,12 @@ import {
   previousEntry,
   todayISO,
 } from "./record-utils";
+import {
+  recordLoggedOnDate,
+  recordsForRoutine,
+  routineById,
+  routineForDate,
+} from "./routines";
 
 /* ---------------------------------------------------------------------------
  * Local UI state (not persisted)
@@ -138,7 +144,7 @@ export function renderApp(state: AppState): HTMLElement {
   }
 
   const view: View = state.view;
-  if (view === "new") return renderNewRecord();
+  if (view === "new") return renderNewRecord(state);
   if (state.records.length === 0) return renderEmpty();
   if (view === "grid") return renderGrid(state);
   // view === "focus"
@@ -299,7 +305,8 @@ function renderTagPills(tags: readonly string[], variant: "muted" | "filter" = "
 
 function renderGridFilter(state: AppState): HTMLElement | null {
   const all = getAllTags(state.records);
-  if (all.length === 0) return null;
+  const routine = routineById(state.routineConfig, state.activeRoutineId);
+  if (all.length === 0 && routine === null) return null;
   const bar = document.createElement("div");
   bar.className = "tag-filter-bar";
   bar.setAttribute("role", "group");
@@ -310,9 +317,20 @@ function renderGridFilter(state: AppState): HTMLElement | null {
   allBtn.type = "button";
   allBtn.textContent = "ALL";
   allBtn.dataset.tagFilter = "";
-  allBtn.className = active === null ? "tag-filter-pill tag-filter-pill--active" : "tag-filter-pill";
-  allBtn.setAttribute("aria-pressed", String(active === null));
+  const allActive = active === null && routine === null;
+  allBtn.className = allActive ? "tag-filter-pill tag-filter-pill--active" : "tag-filter-pill";
+  allBtn.setAttribute("aria-pressed", String(allActive));
   bar.append(allBtn);
+
+  if (routine !== null) {
+    const todayBtn = document.createElement("button");
+    todayBtn.type = "button";
+    todayBtn.textContent = `TODAY · ${routine.name}`;
+    todayBtn.dataset.routineFilter = routine.id;
+    todayBtn.className = "tag-filter-pill tag-filter-pill--routine tag-filter-pill--active";
+    todayBtn.setAttribute("aria-pressed", "true");
+    bar.append(todayBtn);
+  }
 
   for (const tag of all) {
     const btn = document.createElement("button");
@@ -367,7 +385,46 @@ function renderExpandedTags(record: Record): HTMLElement {
 
   form.append(input, save);
   wrap.append(form);
+  wrap.append(renderQuickStepEditor(record));
   return wrap;
+}
+
+function renderQuickStepEditor(record: Record): HTMLElement {
+  const form = document.createElement("form");
+  form.dataset.quickStepForm = "true";
+  form.dataset.recordId = record.id;
+  form.className = "expanded-quick-step";
+
+  const label = document.createElement("label");
+  label.className = "form-field form-field--compact";
+  const header = document.createElement("span");
+  header.className = "form-field__header";
+  const name = document.createElement("span");
+  name.className = "form-field__label";
+  name.textContent = "QUICK STEP";
+  const hint = document.createElement("span");
+  hint.className = "form-field__hint";
+  hint.textContent = "Optional increment";
+  header.append(name, hint);
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.name = "quickStep";
+  input.min = "0.000001";
+  input.step = "any";
+  input.inputMode = "decimal";
+  input.value = record.quickStep === undefined ? "" : String(record.quickStep);
+  input.placeholder = "e.g. 2.5";
+  input.className = "field-input field-input--compact tabular-nums";
+  input.setAttribute("aria-label", "Quick value increment");
+  label.append(header, input);
+
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "button button--ghost button--compact";
+  save.textContent = "SAVE STEP";
+  form.append(label, save);
+  return form;
 }
 
 /* ---------------------------------------------------------------------------
@@ -786,7 +843,13 @@ function renderFocusExpandedSection(
   heading.className = "view-header__heading";
   const eyebrow = document.createElement("span");
   eyebrow.className = "eyebrow";
-  eyebrow.textContent = "SWIPE DOWN TO CLOSE";
+  const session = state.captureSession;
+  const sessionRoutine = session === null
+    ? null
+    : routineById(state.routineConfig, session.routineId);
+  eyebrow.textContent = session !== null && sessionRoutine !== null
+    ? `${sessionRoutine.name.toUpperCase()} · ${session.currentIndex + 1}/${session.recordIds.length}`
+    : "SWIPE DOWN TO CLOSE";
   const title = document.createElement("h2");
   title.className = "view-header__title";
   title.textContent = record.name;
@@ -815,14 +878,14 @@ function renderFocusExpandedSection(
   addWrap.className = "entry-composer";
 
   if (state.addingEntry) {
-    addWrap.append(renderInlineAddEntryForm(record));
+    addWrap.append(renderInlineAddEntryForm(record, session !== null));
   } else {
     const actions = document.createElement("div");
     actions.className = "entry-composer__actions";
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "button button--primary button--compact";
-    toggle.textContent = "ADD ENTRY";
+    toggle.textContent = session === null ? "ADD ENTRY" : "CONTINUE SESSION";
     toggle.dataset.newEntryToggle = "true";
     actions.append(toggle);
 
@@ -1028,7 +1091,7 @@ function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
  * Inline add-entry form (inside the expanded focus)
  * ------------------------------------------------------------------------- */
 
-function renderInlineAddEntryForm(record: Record): HTMLElement {
+function renderInlineAddEntryForm(record: Record, captureMode = false): HTMLElement {
   const form = document.createElement("form");
   form.className = "entry-form app-surface";
   form.dataset.addEntryForm = "true";
@@ -1074,8 +1137,55 @@ function renderInlineAddEntryForm(record: Record): HTMLElement {
     renderField("VALUE", valueInput, record.unit),
     renderField("DATE", dateInput),
   );
-  form.append(heading, fields, submit);
+
+  const quickValues = renderQuickValueButtons(record);
+  if (quickValues !== null) form.append(quickValues);
+
+  const actions = document.createElement("div");
+  actions.className = "entry-form__actions";
+  actions.append(submit);
+  if (captureMode) {
+    const skip = document.createElement("button");
+    skip.type = "button";
+    skip.className = "button button--ghost button--compact";
+    skip.textContent = "SKIP";
+    skip.dataset.skipCapture = "true";
+    actions.append(skip);
+  }
+
+  form.append(heading, fields, actions);
   return form;
+}
+
+function renderQuickValueButtons(record: Record): HTMLElement | null {
+  const latest = latestEntry(record);
+  if (latest === null) return null;
+
+  const values = [{ label: "LAST", value: latest.value }];
+  if (record.quickStep !== undefined) {
+    values.push(
+      { label: `−${formatValueForUnit(record.quickStep, record.unit)}`, value: latest.value - record.quickStep },
+      { label: `+${formatValueForUnit(record.quickStep, record.unit)}`, value: latest.value + record.quickStep },
+    );
+  }
+
+  const unique = new Map<number, string>();
+  for (const option of values) unique.set(option.value, option.label);
+  if (unique.size === 0) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "quick-values";
+  wrap.setAttribute("aria-label", "Quick values");
+  for (const [value, label] of unique) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "quick-value";
+    button.textContent = label;
+    button.dataset.quickValue = String(value);
+    button.setAttribute("aria-label", `Use value ${formatValueWithUnit(value, record.unit)}`);
+    wrap.append(button);
+  }
+  return wrap;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1098,10 +1208,12 @@ const UNIT_PRESETS: ReadonlyArray<string> = [
   "", // CUSTOM
 ];
 
-function renderNewRecord(): HTMLElement {
+function renderNewRecord(state: AppState): HTMLElement {
   const section = document.createElement("section");
   section.className = "new-record-view app-view";
   section.dataset.newRecord = "true";
+  const routine = routineById(state.routineConfig, state.activeRoutineId) ??
+    routineForDate(state.routineConfig, todayISO());
 
   const header = document.createElement("header");
   header.className = "view-header";
@@ -1214,6 +1326,15 @@ function renderNewRecord(): HTMLElement {
   dateInput.value = todayISO();
   dateInput.className = "field-input tabular-nums scheme-dark";
 
+  const quickStepInput = document.createElement("input");
+  quickStepInput.type = "number";
+  quickStepInput.name = "quickStep";
+  quickStepInput.min = "0.000001";
+  quickStepInput.step = "any";
+  quickStepInput.inputMode = "decimal";
+  quickStepInput.placeholder = "e.g. 2.5";
+  quickStepInput.className = "field-input tabular-nums";
+
   // Submit — full-width primary yellow button
   const submit = document.createElement("button");
   submit.type = "submit";
@@ -1252,6 +1373,7 @@ function renderNewRecord(): HTMLElement {
   details.append(
     renderField("UNIT", unitInput, "Choose a preset or enter your own"),
     renderField("START DATE", dateInput),
+    renderField("QUICK STEP", quickStepInput, "Optional increment"),
   );
 
   const tagsInput = document.createElement("input");
@@ -1259,8 +1381,13 @@ function renderNewRecord(): HTMLElement {
   tagsInput.name = "tags";
   tagsInput.autocomplete = "off";
   tagsInput.placeholder = "CHEST, PUSH";
+  tagsInput.value = routine?.tags.join(", ") ?? "";
   tagsInput.className = "field-input uppercase";
-  const tagsField = renderField("TAGS", tagsInput, "Optional · comma separated · max 5");
+  const tagsField = renderField(
+    "TAGS",
+    tagsInput,
+    routine === null ? "Optional · comma separated · max 5" : `Suggested · ${routine.name}`,
+  );
 
   const footer = document.createElement("div");
   footer.className = "record-form__footer";
@@ -1303,9 +1430,14 @@ function renderGrid(state: AppState): HTMLElement {
   }
 
   const activeFilter = state.activeTagFilter ?? null;
+  const activeRoutine = routineById(state.routineConfig, state.activeRoutineId);
   const visibleRecords = activeFilter
     ? state.records.filter((r) => (r.tags ?? []).includes(activeFilter))
-    : state.records;
+    : activeRoutine === null
+      ? state.records
+      : recordsForRoutine(state.records, activeRoutine);
+
+  section.append(renderRoutineContext(state));
 
   const grid = document.createElement("div");
   grid.className = "records-list app-surface";
@@ -1313,13 +1445,17 @@ function renderGrid(state: AppState): HTMLElement {
   if (visibleRecords.length === 0) {
     const empty = document.createElement("p");
     empty.className = "grid-empty";
-    empty.textContent = activeFilter ? `NO RECORDS FOR ${activeFilter}` : "NO RECORDS";
+    empty.textContent = activeFilter
+      ? `NO RECORDS FOR ${activeFilter}`
+      : activeRoutine === null
+        ? "NO RECORDS"
+        : `NO RECORDS FOR ${activeRoutine.name.toUpperCase()}`;
     grid.append(empty);
   } else {
     visibleRecords.forEach((record, i) => {
       const isLast = i === visibleRecords.length - 1;
       grid.append(
-        renderGridCell(record, record.id === state.currentRecordId, isLast),
+        renderGridCell(record, record.id === state.currentRecordId, isLast, activeRoutine),
       );
     });
   }
@@ -1328,10 +1464,79 @@ function renderGrid(state: AppState): HTMLElement {
   return section;
 }
 
+function renderRoutineContext(state: AppState): HTMLElement {
+  const scheduled = routineForDate(state.routineConfig, todayISO());
+  const active = routineById(state.routineConfig, state.activeRoutineId);
+  const routine = active ?? scheduled;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "routine-context";
+
+  const copy = document.createElement("div");
+  copy.className = "routine-context__copy";
+  const label = document.createElement("span");
+  label.className = "routine-context__label";
+  label.textContent = routine === null ? "WEEKLY ROUTINE" : "TODAY'S ROUTINE";
+  const title = document.createElement("strong");
+  title.className = "routine-context__title";
+  title.textContent = routine === null ? "No routine for today" : routine.name;
+  const meta = document.createElement("span");
+  meta.className = "routine-context__meta";
+
+  if (routine === null) {
+    meta.textContent = "Set up a routine to narrow today's records.";
+  } else {
+    const matching = recordsForRoutine(state.records, routine);
+    const pending = matching.filter((record) => !recordLoggedOnDate(record, todayISO()));
+    meta.textContent = routine.tags.length > 0
+      ? `${routine.tags.join(" + ")} · ${pending.length} PENDING`
+      : `${pending.length} PENDING`;
+  }
+  copy.append(label, title, meta);
+
+  const actions = document.createElement("div");
+  actions.className = "routine-context__actions";
+  if (routine !== null) {
+    const useToday = document.createElement("button");
+    useToday.type = "button";
+    useToday.className = "button button--ghost button--compact";
+    useToday.textContent = active?.id === routine.id ? "LOG TODAY" : "USE TODAY";
+    const pending = recordsForRoutine(state.records, routine)
+      .filter((record) => !recordLoggedOnDate(record, todayISO()));
+    if (active?.id === routine.id) {
+      useToday.dataset.startRoutine = "true";
+      useToday.disabled = pending.length === 0;
+    } else {
+      useToday.dataset.routineFilter = routine.id;
+    }
+    useToday.setAttribute(
+      "aria-label",
+      active?.id === routine.id && pending.length === 0
+        ? "All routine records logged today"
+        : active?.id === routine.id
+          ? "Log today's routine"
+          : `Show ${routine.name}`,
+    );
+    actions.append(useToday);
+  }
+
+  const settings = document.createElement("button");
+  settings.type = "button";
+  settings.className = "button button--ghost button--compact";
+  settings.textContent = routine === null ? "SET UP" : "EDIT";
+  settings.dataset.routineOpen = "true";
+  settings.setAttribute("aria-label", "Edit weekly routines");
+  actions.append(settings);
+
+  wrapper.append(copy, actions);
+  return wrapper;
+}
+
 function renderGridCell(
   record: Record,
   isCurrent: boolean,
   isLast: boolean,
+  routine: RoutineProfile | null,
 ): HTMLElement {
   const cell = document.createElement("button");
   cell.type = "button";
@@ -1375,6 +1580,15 @@ function renderGridCell(
     dateLine.textContent = "—";
   }
   left.append(dateLine);
+
+  if (routine !== null) {
+    const status = document.createElement("span");
+    status.className = recordLoggedOnDate(record, todayISO())
+      ? "routine-record-status routine-record-status--done"
+      : "routine-record-status";
+    status.textContent = recordLoggedOnDate(record, todayISO()) ? "LOGGED TODAY" : "PENDING";
+    left.append(status);
+  }
 
   if (record.tags && record.tags.length > 0) {
     const tags = document.createElement("div");
@@ -1464,5 +1678,11 @@ export const VIEW_ATTRS = {
   entryEditForm: "data-entry-edit-form",
   repeatEntry: "data-repeat-entry",
   tagFilter: "data-tag-filter",
+  routineFilter: "data-routine-filter",
+  routineOpen: "data-routine-open",
+  startRoutine: "data-start-routine",
+  skipCapture: "data-skip-capture",
+  quickValue: "data-quick-value",
   tagsForm: "data-tags-form",
+  quickStepForm: "data-quick-step-form",
 } as const;

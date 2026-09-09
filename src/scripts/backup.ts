@@ -1,21 +1,30 @@
 /** Portable, versioned backup files for Rec-Ord's local-first data. */
 
-import { parseLocalDate } from "./record-utils";
+import {
+  normalizeQuickStep,
+  normalizeTags,
+  parseLocalDate,
+} from "./record-utils";
+import { emptyRoutineConfig, normalizeRoutineConfig } from "./routines";
 import type {
   Entry,
   PersistedState,
   Record as TrackedRecord,
+  RoutineConfig,
 } from "./types";
 
 const BACKUP_FORMAT = "rec-ord-backup";
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
+const LEGACY_BACKUP_VERSION = 1;
 const MAX_BACKUP_BYTES = 5 * 1024 * 1024;
 const MAX_RECORDS = 1_000;
 const MAX_TOTAL_ENTRIES = 100_000;
+const MAX_ROUTINES = 31;
+const MAX_ROUTINE_OVERRIDES = 366;
 
-interface BackupEnvelopeV1 {
+interface BackupEnvelope {
   format: typeof BACKUP_FORMAT;
-  version: typeof BACKUP_VERSION;
+  version: typeof BACKUP_VERSION | typeof LEGACY_BACKUP_VERSION;
   exportedAt: string;
   data: PersistedState;
 }
@@ -81,6 +90,83 @@ function sanitizeEntry(value: unknown, recordIndex: number, entryIndex: number):
   return entry;
 }
 
+function sanitizeTags(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((tag) => typeof tag !== "string")) {
+    throw new BackupValidationError(`${field} tags are invalid.`);
+  }
+  if (value.length > 5) {
+    throw new BackupValidationError(`${field} contains too many tags.`);
+  }
+  return normalizeTags(value);
+}
+
+function sanitizeRoutineConfig(value: unknown): RoutineConfig {
+  if (value === undefined) return emptyRoutineConfig();
+  if (!isObject(value) || !Array.isArray(value.profiles) || !Array.isArray(value.overrides)) {
+    throw new BackupValidationError("The routine configuration is invalid.");
+  }
+  if (value.profiles.length > MAX_ROUTINES) {
+    throw new BackupValidationError("The backup contains too many routines.");
+  }
+  if (value.overrides.length > MAX_ROUTINE_OVERRIDES) {
+    throw new BackupValidationError("The backup contains too many routine overrides.");
+  }
+
+  const profileIds = new Set<string>();
+  for (const [index, raw] of value.profiles.entries()) {
+    const field = `Routine ${index + 1}`;
+    if (!isObject(raw)) throw new BackupValidationError(`${field} is invalid.`);
+    const id = readString(raw.id, `${field} ID`, 128);
+    readString(raw.name, `${field} name`, 80);
+    if (profileIds.has(id)) {
+      throw new BackupValidationError("The backup contains duplicate routine IDs.");
+    }
+    profileIds.add(id);
+    if (
+      !Array.isArray(raw.weekdays) ||
+      raw.weekdays.some(
+        (day) =>
+          typeof day !== "number" ||
+          !Number.isInteger(day) ||
+          day < 0 ||
+          day > 6,
+      )
+    ) {
+      throw new BackupValidationError(`${field} has invalid weekdays.`);
+    }
+    sanitizeTags(raw.tags, field);
+    if (
+      !Array.isArray(raw.recordIds) ||
+      raw.recordIds.some((recordId) => typeof recordId !== "string")
+    ) {
+      throw new BackupValidationError(`${field} record selection is invalid.`);
+    }
+  }
+
+  const overrideDates = new Set<string>();
+  for (const [index, raw] of value.overrides.entries()) {
+    const field = `Routine override ${index + 1}`;
+    if (!isObject(raw)) throw new BackupValidationError(`${field} is invalid.`);
+    const date = readString(raw.date, `${field} date`, 10);
+    if (Number.isNaN(parseLocalDate(date).getTime())) {
+      throw new BackupValidationError(`${field} has an invalid date.`);
+    }
+    if (overrideDates.has(date)) {
+      throw new BackupValidationError("The backup contains duplicate routine override dates.");
+    }
+    overrideDates.add(date);
+    if (raw.routineId !== null && typeof raw.routineId !== "string") {
+      throw new BackupValidationError(`${field} routine ID is invalid.`);
+    }
+    if (typeof raw.routineId === "string" && !profileIds.has(raw.routineId)) {
+      throw new BackupValidationError(`${field} references a missing routine.`);
+    }
+  }
+
+  return normalizeRoutineConfig(value);
+}
+
 function sanitizeRecord(value: unknown, index: number): TrackedRecord {
   const field = `Record ${index + 1}`;
   if (!isObject(value)) {
@@ -122,6 +208,15 @@ function sanitizeRecord(value: unknown, index: number): TrackedRecord {
   if (direction === "up" || direction === "down" || direction === null) {
     record.direction = direction;
   }
+  const tags = sanitizeTags(value.tags, field);
+  if (tags !== undefined) record.tags = tags;
+  if (value.quickStep !== undefined) {
+    const quickStep = normalizeQuickStep(value.quickStep);
+    if (quickStep === undefined) {
+      throw new BackupValidationError(`${field} has an invalid quick step.`);
+    }
+    record.quickStep = quickStep;
+  }
   return record;
 }
 
@@ -159,17 +254,21 @@ function sanitizePersistedState(value: unknown): PersistedState {
     throw new BackupValidationError("The focused record does not exist in the backup.");
   }
 
-  return { records, currentRecordId };
+  return {
+    records,
+    currentRecordId,
+    routineConfig: sanitizeRoutineConfig(value.routineConfig),
+  };
 }
 
-function parseEnvelope(value: unknown): BackupEnvelopeV1 {
+function parseEnvelope(value: unknown): BackupEnvelope {
   if (!isObject(value)) {
     throw new BackupValidationError("This is not a Rec-Ord backup.");
   }
   if (value.format !== BACKUP_FORMAT) {
     throw new BackupValidationError("This is not a Rec-Ord backup.");
   }
-  if (value.version !== BACKUP_VERSION) {
+  if (value.version !== BACKUP_VERSION && value.version !== LEGACY_BACKUP_VERSION) {
     throw new BackupValidationError("This backup version is not supported.");
   }
   const exportedAt = readString(value.exportedAt, "Export date", 64);
@@ -179,7 +278,7 @@ function parseEnvelope(value: unknown): BackupEnvelopeV1 {
 
   return {
     format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
+    version: value.version,
     exportedAt,
     data: sanitizePersistedState(value.data),
   };
@@ -189,7 +288,7 @@ export function createBackupFile(
   state: PersistedState,
   exportedAt = new Date(),
 ): File {
-  const envelope: BackupEnvelopeV1 = {
+  const envelope: BackupEnvelope = {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: exportedAt.toISOString(),

@@ -84,6 +84,8 @@ function isEntry(value: unknown): value is Entry {
 function isTrackedRecord(value: unknown): value is TrackedRecord {
   if (!isObject(value) || !Array.isArray(value.entries)) return false;
   const direction = value.direction;
+  const tags = value.tags;
+  const quickStep = value.quickStep;
   return (
     typeof value.id === "string" &&
     value.id !== "" &&
@@ -94,6 +96,12 @@ function isTrackedRecord(value: unknown): value is TrackedRecord {
     isTimestamp(value.createdAt) &&
     value.entries.length > 0 &&
     value.entries.every(isEntry) &&
+    (tags === undefined ||
+      (Array.isArray(tags) &&
+        tags.length <= 5 &&
+        tags.every((tag) => typeof tag === "string"))) &&
+    (quickStep === undefined ||
+      (typeof quickStep === "number" && Number.isFinite(quickStep) && quickStep > 0)) &&
     (direction === undefined ||
       direction === null ||
       direction === "up" ||
@@ -141,6 +149,8 @@ function cloneRecord(record: TrackedRecord): TrackedRecord {
     createdAt: record.createdAt,
   };
   if (record.direction !== undefined) cloned.direction = record.direction;
+  if (record.tags !== undefined) cloned.tags = [...record.tags];
+  if (record.quickStep !== undefined) cloned.quickStep = record.quickStep;
   return cloned;
 }
 
