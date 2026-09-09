@@ -53,9 +53,21 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest,woff2}"],
+        globPatterns: ["**/*.{js,css,svg,png,ico,webmanifest,woff2}"],
         cleanupOutdatedCaches: true,
-        navigateFallback: "/",
+        navigateFallback: undefined,
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === "navigate",
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "rec-ord-pages",
+              networkTimeoutSeconds: 3,
+              cacheableResponse: { statuses: [200] },
+              expiration: { maxEntries: 1 },
+            },
+          },
+        ],
       },
     }),
   ],
