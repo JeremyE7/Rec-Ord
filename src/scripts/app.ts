@@ -8,7 +8,7 @@
  * Boot sequence:
  *   1. Load persisted records from localStorage.
  *   2. Build the initial AppState (records + currentRecordId from
- *      persistence; view = "focus", expanded = false, addingEntry = false).
+ *      persistence; view = "focus", expanded = false, editingEntryId = null).
  *   3. Mount the rendered app into `#app` and attach gestures.
  *   4. Subscribe to store changes: on every mutation, debounce-save
  *      and re-render the app.
@@ -49,7 +49,6 @@ import {
   consumeDeleteConfirm,
   onRerender,
   renderApp,
-  setEditingEntryId,
   VIEW_ATTRS,
 } from "./render";
 import { getState, initState, setState, subscribe } from "./store";
@@ -83,6 +82,18 @@ function currentRecord(state: AppState): Record | null {
 
 function currentIndex(state: AppState): number {
   return state.records.findIndex((r) => r.id === state.currentRecordId);
+}
+
+function focusEntryRow(entryId: string): void {
+  const row = [...document.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`)]
+    .find((candidate) => candidate.dataset.entryId === entryId);
+  if (row !== undefined) {
+    row.focus({ preventScroll: true });
+    return;
+  }
+
+  document.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
+    ?.focus({ preventScroll: true });
 }
 
 function filteredRecords(state: AppState): Record[] {
@@ -154,7 +165,7 @@ function rerender(): void {
  * ------------------------------------------------------------------------- */
 
 function wire(root: HTMLElement): void {
-  // Forms: new-record + inline add-entry
+  // Forms: new-record + contextual entry/settings editors
   const newRecordForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.newRecordForm}]`);
   if (newRecordForm !== null) {
     newRecordForm.addEventListener("submit", onNewRecordSubmit);
@@ -177,7 +188,7 @@ function wire(root: HTMLElement): void {
     btn.addEventListener("click", onDirectionClick);
   });
 
-  // "+ NEW ENTRY" toggle button (collapsed → open inline form)
+  // ADD ENTRY action (expanded focus → contextual modal surface)
   const newEntryToggle = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`);
   if (newEntryToggle !== null) {
     newEntryToggle.addEventListener("click", onNewEntryToggleClick);
@@ -222,15 +233,26 @@ function wire(root: HTMLElement): void {
     btn.addEventListener("click", onQuickValueClick);
   });
 
-  const tagsForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.tagsForm}]`);
-  if (tagsForm !== null) {
-    tagsForm.addEventListener("submit", onTagsSubmit);
+  const recordSettingsForm = root.querySelector<HTMLFormElement>(
+    `[${VIEW_ATTRS.recordSettingsForm}]`,
+  );
+  if (recordSettingsForm !== null) {
+    recordSettingsForm.addEventListener("submit", onRecordSettingsSubmit);
   }
 
-  const quickStepForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.quickStepForm}]`);
-  if (quickStepForm !== null) {
-    quickStepForm.addEventListener("submit", onQuickStepSubmit);
+  const recordSettingsOpen = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.recordSettingsOpen}]`,
+  );
+  if (recordSettingsOpen !== null) {
+    recordSettingsOpen.addEventListener("click", onRecordSettingsOpen);
   }
+
+  const cancelEditors = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.cancelEditor}]`,
+  );
+  cancelEditors.forEach((button) => {
+    button.addEventListener("click", onCancelEditor);
+  });
 
   // DELETE RECORD two-tap
   const deleteBtn = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.deleteRecord}]`);
@@ -247,7 +269,7 @@ function wire(root: HTMLElement): void {
     cell.addEventListener("click", onGridRecordClick);
   });
 
-  // Entry rows: swipe-to-delete + tap-to-edit
+  // Entry rows: swipe-to-delete + tap-to-edit in a contextual modal
   const rows = root.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`);
   rows.forEach((row) => {
     const entryId = row.getAttribute(VIEW_ATTRS.entryId);
@@ -255,19 +277,15 @@ function wire(root: HTMLElement): void {
     attachRowSwipe(row, {
       onDelete: () => deleteEntry(entryId),
     });
-    // Tap → edit (but only when the row is in read-only mode — if the
-    // user is already editing this row, the form's SAVE/CANCEL inputs
-    // own the clicks). Dispatch the custom event; the listener in
-    // init() updates `editingEntryId` and re-renders.
+    // Tap → edit. Dispatch the custom event; the listener in init() changes
+    // the top-level view to the contextual entry editor.
     row.addEventListener("click", () => {
-      if (row.querySelector(`[${VIEW_ATTRS.entryEditForm}]`) !== null) return;
       document.dispatchEvent(
         new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
       );
     });
     row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
-      if (row.querySelector(`[${VIEW_ATTRS.entryEditForm}]`) !== null) return;
       event.preventDefault();
       document.dispatchEvent(
         new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
@@ -275,16 +293,13 @@ function wire(root: HTMLElement): void {
     });
   });
 
-  // Edit entry form: submit → onEditEntrySubmit, cancel → clear + rerender
-  const editEntryForms = root.querySelectorAll<HTMLFormElement>(
+  // Contextual entry modal: submit → save, cancel → return to focus.
+  const editEntryForm = root.querySelector<HTMLFormElement>(
     `[${VIEW_ATTRS.entryEditForm}]`,
   );
-  editEntryForms.forEach((form) => {
-    form.addEventListener("submit", onEditEntrySubmit);
-    // Escape inside the form cancels (the global keydown handler is a
-    // no-op while focused in a form input, so the form needs its own).
-    form.addEventListener("keydown", onEditFormKeyDown as EventListener);
-  });
+  if (editEntryForm !== null) {
+    editEntryForm.addEventListener("submit", onEditEntrySubmit);
+  }
 
 }
 
@@ -377,7 +392,7 @@ function onNewRecordSubmit(e: SubmitEvent): void {
       currentRecordId: record.id,
       view: "focus",
       expanded: false,
-      addingEntry: false,
+      editingEntryId: null,
       captureSession: null,
     }));
   }, { type: "panel", direction: "out" });
@@ -416,17 +431,26 @@ function onAddEntrySubmit(e: SubmitEvent): void {
       return {
         records: prev.records.map((r) => (r.id === record.id ? updated : r)),
         currentRecordId: continueSession ? nextRecordId : record.id,
+        view: isSessionEntry && continueSession ? "entry" : "focus",
         expanded: continueSession ? true : isSessionEntry ? false : prev.expanded,
-        addingEntry: continueSession,
+        editingEntryId: null,
         captureSession: isSessionEntry ? nextSession : prev.captureSession,
       };
     });
-  }, { type: "fade" });
+  }, continueSession
+    ? { type: "fade" }
+    : { type: "modal", direction: "out" });
 
   if (continueSession) {
     void transition.then(() => {
       document.querySelector<HTMLInputElement>(
         `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+      )?.focus({ preventScroll: true });
+    });
+  } else if (!isSessionEntry) {
+    void transition.then(() => {
+      document.querySelector<HTMLButtonElement>(
+        `[${VIEW_ATTRS.newEntryToggle}]`,
       )?.focus({ preventScroll: true });
     });
   }
@@ -490,7 +514,7 @@ function onTagFilterClick(e: MouseEvent): void {
     setState({
       activeTagFilter: next,
       activeRoutineId: null,
-      ...(shouldJump ? { currentRecordId: visible[0]!.id, view: "focus" as const, expanded: false, addingEntry: false } : {}),
+      ...(shouldJump ? { currentRecordId: visible[0]!.id, view: "focus" as const, expanded: false, editingEntryId: null } : {}),
       ...(next !== null && visible.length > 0 && state.view === "grid" ? {} : {}),
     });
   }, { type: "fade" });
@@ -519,7 +543,7 @@ function onRoutineFilterClick(e: MouseEvent): void {
             currentRecordId: visible[0]!.id,
             view: "grid" as const,
             expanded: false,
-            addingEntry: false,
+            editingEntryId: null,
           }
         : {}),
     });
@@ -541,11 +565,11 @@ function onStartRoutineClick(): void {
       activeTagFilter: null,
       captureSession: session,
       currentRecordId: firstRecordId,
-      view: "focus",
+      view: "entry",
       expanded: true,
-      addingEntry: true,
+      editingEntryId: null,
     });
-  }, { type: "record", direction: "down" });
+  }, { type: "modal", direction: "in" });
 
   void transition.then(() => {
     document.querySelector<HTMLInputElement>(
@@ -566,8 +590,9 @@ function onSkipCaptureClick(): void {
     setState({
       captureSession: nextSession,
       currentRecordId: continueSession ? nextRecordId : state.currentRecordId,
+      view: continueSession ? "entry" : "focus",
       expanded: continueSession,
-      addingEntry: continueSession,
+      editingEntryId: null,
     });
   }, { type: "record", direction: "up" });
 
@@ -591,40 +616,42 @@ function onQuickValueClick(e: MouseEvent): void {
   input.focus({ preventScroll: true });
 }
 
-function onTagsSubmit(e: SubmitEvent): void {
+function onRecordSettingsSubmit(e: SubmitEvent): void {
   e.preventDefault();
   const form = e.currentTarget as HTMLFormElement;
   const recordId = form.dataset.recordId;
   if (recordId === undefined) return;
   const data = new FormData(form);
-  const raw = String(data.get("tags") ?? "");
-  const parsed = parseTagsInput(raw);
-  void commit(() => {
-    setState((prev) => ({
-      records: prev.records.map((r) => (r.id === recordId ? { ...r, tags: parsed } : r)),
-    }));
-  }, { type: "fade" });
-}
+  const tags = parseTagsInput(String(data.get("tags") ?? ""));
+  const quickStepRaw = String(data.get("quickStep") ?? "").trim();
+  const quickStep = quickStepRaw === ""
+    ? undefined
+    : normalizeQuickStep(Number(quickStepRaw));
+  if (tags === undefined || (quickStepRaw !== "" && quickStep === undefined)) return;
 
-function onQuickStepSubmit(e: SubmitEvent): void {
-  e.preventDefault();
-  const form = e.currentTarget as HTMLFormElement;
-  const recordId = form.dataset.recordId;
-  if (recordId === undefined) return;
-  const data = new FormData(form);
-  const raw = String(data.get("quickStep") ?? "").trim();
-  const quickStep = raw === "" ? undefined : normalizeQuickStep(Number(raw));
-  if (raw !== "" && quickStep === undefined) return;
-
-  void commit(() => {
+  const transition = commit(() => {
     setState((prev) => ({
-      records: prev.records.map((record) =>
-        record.id === recordId
-          ? { ...record, ...(quickStep === undefined ? { quickStep: undefined } : { quickStep }) }
-          : record,
-      ),
+      records: prev.records.map((record) => {
+        if (record.id !== recordId) return record;
+        const next: Record = { ...record, tags };
+        if (quickStep === undefined) {
+          delete next.quickStep;
+        } else {
+          next.quickStep = quickStep;
+        }
+        return next;
+      }),
+      view: "focus",
+      expanded: true,
+      editingEntryId: null,
     }));
-  }, { type: "fade" });
+  }, { type: "modal", direction: "out" });
+
+  void transition.then(() => {
+    document.querySelector<HTMLButtonElement>(
+      `[${VIEW_ATTRS.recordSettingsOpen}]`,
+    )?.focus({ preventScroll: true });
+  });
 }
 
 function onEditEntrySubmit(e: SubmitEvent): void {
@@ -651,11 +678,6 @@ function onEditEntrySubmit(e: SubmitEvent): void {
   const wasLatest = latestEntry(before)?.id === entryId;
   const valueChanged = oldEntry.value !== value;
 
-  // Clear the editing state BEFORE the state update so the render that
-  // fires from the subscriber sees `editingEntryId === null` and shows
-  // the read-only row (not the form).
-  setEditingEntryId(null);
-
   const transition = commit(() => {
     setState((prev) => {
       const r = currentRecord(prev);
@@ -664,9 +686,19 @@ function onEditEntrySubmit(e: SubmitEvent): void {
         entry.id === entryId ? { ...entry, value, date } : entry,
       );
       const updated: Record = { ...r, entries: sortEntries(updatedEntries) };
-      return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
+      return {
+        records: prev.records.map((x) => (x.id === r.id ? updated : x)),
+        view: "focus",
+        expanded: true,
+        editingEntryId: null,
+        captureSession: null,
+      };
     });
-  }, { type: "fade" });
+  }, { type: "modal", direction: "out" });
+
+  void transition.then(() => {
+    focusEntryRow(entryId);
+  });
 
   // PR pulse on edit: only when the edited entry IS the latest after
   // the state update (which can change if the user re-dated an older
@@ -687,28 +719,37 @@ function onEditEntrySubmit(e: SubmitEvent): void {
   }
 }
 
-function onEditFormKeyDown(e: KeyboardEvent): void {
-  // Escape inside the edit form → cancel. Enter is handled by the
-  // form's default submit; this only adds the cancel path.
-  if (e.key === "Escape") {
-    e.preventDefault();
-    setEditingEntryId(null);
-    document.dispatchEvent(new CustomEvent("rec-ord:rerender"));
-  }
-}
-
 function onNewEntryToggleClick(): void {
-  // Opening is an explicit transactional action. Closing is gestural:
-  // swipe down once to dismiss the composer, then again to collapse edit.
-  const opening = true;
+  const state = getState();
+  if (state.view !== "focus" || !state.expanded) return;
   void commit(() => {
-    setState({ addingEntry: opening });
-  }, { type: "fade" }).then(() => {
-    if (!opening) return;
+    setState({ view: "entry", editingEntryId: null });
+  }, { type: "modal", direction: "in" }).then(() => {
     document.querySelector<HTMLInputElement>(
       `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
     )?.focus({ preventScroll: true });
   });
+}
+
+function onRecordSettingsOpen(): void {
+  const state = getState();
+  if (state.view !== "focus" || !state.expanded) return;
+  void commit(() => {
+    setState({ view: "record-settings", editingEntryId: null });
+  }, { type: "modal", direction: "in" }).then(() => {
+    document.querySelector<HTMLInputElement>(
+      `[${VIEW_ATTRS.recordSettingsForm}] input[name="tags"]`,
+    )?.focus({ preventScroll: true });
+  });
+}
+
+function onCancelEditor(): void {
+  const state = getState();
+  if (state.view === "entry") {
+    closeEntryEditor();
+  } else if (state.view === "record-settings") {
+    closeRecordSettings();
+  }
 }
 
 function onDeleteRecordClick(e: MouseEvent): void {
@@ -753,7 +794,7 @@ function performDeleteRecord(): void {
         currentRecordId: null,
         view: "focus",
         expanded: false,
-        addingEntry: false,
+        editingEntryId: null,
         captureSession: null,
       });
     }, { type: "record", direction: "up" });
@@ -773,7 +814,7 @@ function performDeleteRecord(): void {
       currentRecordId: neighbor ? neighbor.id : null,
       view: "focus",
       expanded: false,
-      addingEntry: false,
+      editingEntryId: null,
       captureSession: null,
     });
   }, { type: "record", direction });
@@ -840,7 +881,7 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
         currentRecordId: item.record.id,
         view: "focus",
         expanded: detail.source === "immediate",
-        addingEntry: false,
+        editingEntryId: null,
         captureSession: null,
       });
     }, { type: "record", direction: "down" });
@@ -873,7 +914,7 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
         currentRecordId: restored.id,
         view: "focus",
         expanded: detail.source === "immediate",
-        addingEntry: false,
+        editingEntryId: null,
         captureSession: null,
       });
     }, { type: "fade" });
@@ -932,19 +973,10 @@ function goToNextRecord(velocity?: number): boolean {
 function goToPreviousRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "focus") return false;
-  if (state.expanded && state.addingEntry) {
-    // Swipe-down on the inline form: cancel the form, keep the
-    // edit expansion. The user can swipe again to fully collapse.
-    void commit(() => {
-      setState({ addingEntry: false });
-    }, { type: "fade" });
-    return true;
-  }
   if (state.expanded) {
     // Collapse edit.
-    setEditingEntryId(null);
     void commit(() => {
-      setState({ expanded: false, addingEntry: false, captureSession: null });
+      setState({ expanded: false, editingEntryId: null, captureSession: null });
     }, { type: "expand", direction: "out" });
     return true;
   }
@@ -972,7 +1004,7 @@ function openNewRecord(velocity?: number): boolean {
   // by the gesture handler so the only way out is swipe-down.
   if (state.view !== "focus" || state.expanded) return false;
   void commit(() => {
-    setState({ view: "new", captureSession: null });
+    setState({ view: "new", editingEntryId: null, captureSession: null });
   }, { type: "panel", direction: "in", velocity });
   return true;
 }
@@ -981,8 +1013,48 @@ function closeNewRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "new") return false;
   void commit(() => {
-    setState({ view: "focus", captureSession: null });
+    setState({ view: "focus", editingEntryId: null, captureSession: null });
   }, { type: "panel", direction: "out", velocity });
+  return true;
+}
+
+function closeEntryEditor(velocity?: number): boolean {
+  const state = getState();
+  if (state.view !== "entry") return false;
+  const entryId = state.editingEntryId;
+  const keepExpanded = state.captureSession === null && state.expanded;
+  void commit(() => {
+    setState({
+      view: "focus",
+      expanded: keepExpanded,
+      editingEntryId: null,
+      captureSession: null,
+    });
+  }, { type: "modal", direction: "out", velocity }).then(() => {
+    if (entryId !== null) {
+      focusEntryRow(entryId);
+      return;
+    }
+    document.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
+      ?.focus({ preventScroll: true });
+  });
+  return true;
+}
+
+function closeRecordSettings(velocity?: number): boolean {
+  const state = getState();
+  if (state.view !== "record-settings") return false;
+  void commit(() => {
+    setState({
+      view: "focus",
+      expanded: true,
+      editingEntryId: null,
+    });
+  }, { type: "modal", direction: "out", velocity }).then(() => {
+    document.querySelector<HTMLButtonElement>(
+      `[${VIEW_ATTRS.recordSettingsOpen}]`,
+    )?.focus({ preventScroll: true });
+  });
   return true;
 }
 
@@ -991,7 +1063,7 @@ function toggleEdit(): boolean {
   if (state.view !== "focus" || state.expanded) return false;
   if (state.records.length === 0) return false;
   void commit(() => {
-    setState({ expanded: true });
+    setState({ expanded: true, editingEntryId: null });
   }, { type: "expand", direction: "in" });
   return true;
 }
@@ -999,9 +1071,8 @@ function toggleEdit(): boolean {
 function collapseEdit(): boolean {
   const state = getState();
   if (!state.expanded) return false;
-  setEditingEntryId(null);
   void commit(() => {
-    setState({ expanded: false, addingEntry: false, captureSession: null });
+    setState({ expanded: false, editingEntryId: null, captureSession: null });
   }, { type: "expand", direction: "out" });
   return true;
 }
@@ -1016,7 +1087,7 @@ function focusGridRecord(recordId: string): boolean {
       view: "focus",
       currentRecordId: recordId,
       expanded: false,
-      addingEntry: false,
+      editingEntryId: null,
       captureSession: null,
     });
   }, { type: "grid", direction: "in" });
@@ -1038,6 +1109,7 @@ function openGrid(): boolean {
       view: "grid",
       activeRoutineId: routine?.id ?? null,
       activeTagFilter: null,
+      editingEntryId: null,
       captureSession: null,
     });
   }, { type: "grid", direction: "out" });
@@ -1052,9 +1124,11 @@ function closeGrid(): boolean {
 }
 
 function handleSwipeLeft(velocity?: number): boolean {
-  return getState().view === "new"
-    ? closeNewRecord(velocity)
-    : openGrid();
+  const view = getState().view;
+  if (view === "new") return closeNewRecord(velocity);
+  if (view === "entry") return closeEntryEditor(velocity);
+  if (view === "record-settings") return closeRecordSettings(velocity);
+  return openGrid();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1092,9 +1166,13 @@ function isFormElement(target: EventTarget | null): boolean {
 function onKeyDown(e: KeyboardEvent): void {
   // Browser shortcuts (Cmd+R, Ctrl+L, etc.) always pass through.
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  // While typing in a form, let the browser handle every key natively
-  // (Enter submits, Escape clears, arrow keys move the caret, etc.).
-  if (isFormElement(e.target)) return;
+  // While typing in a form, let the browser handle every key natively.
+  // Contextual editors keep Escape available as their close action.
+  if (isFormElement(e.target)) {
+    const view = getState().view;
+    const isContextualEditor = view === "entry" || view === "record-settings";
+    if (!isContextualEditor || e.key !== "Escape") return;
+  }
 
   let handled = false;
   switch (e.key) {
@@ -1115,13 +1193,17 @@ function onKeyDown(e: KeyboardEvent): void {
       handled = toggleEdit();
       break;
     case "Escape": {
-      // Contextual back: grid → focus, new → focus, expanded → focus.
-      const state = getState();
-      if (state.view === "grid") {
-        handled = closeGrid();
-      } else if (state.view === "new") {
-        handled = closeNewRecord();
-      } else if (state.expanded) {
+       // Contextual back: editor/grid/expanded surface → focus.
+       const state = getState();
+       if (state.view === "grid") {
+         handled = closeGrid();
+       } else if (state.view === "new") {
+         handled = closeNewRecord();
+       } else if (state.view === "entry") {
+         handled = closeEntryEditor();
+       } else if (state.view === "record-settings") {
+         handled = closeRecordSettings();
+       } else if (state.expanded) {
         handled = collapseEdit();
       }
       break;
@@ -1184,14 +1266,14 @@ function init(): void {
   const loaded = normalize(loadState());
 
   // Build the initial state: persisted records + currentRecordId;
-  // view resets to focus/collapsed/no-inline-form.
+  // view resets to focus/collapsed with no active editor.
   const initial: AppState = {
     records: loaded.records,
     currentRecordId: loaded.currentRecordId,
     routineConfig: loaded.routineConfig,
     view: "focus",
     expanded: false,
-    addingEntry: false,
+    editingEntryId: null,
     activeTagFilter: null,
     activeRoutineId: null,
     captureSession: null,
@@ -1260,14 +1342,27 @@ function init(): void {
   cleanups.push(unsubRerender);
 
   // Tap-to-edit: the render module dispatches `rec-ord:edit-entry`
-  // with `detail.entryId` when a row is tapped. We set the local edit
-  // state in the render module and re-render — the next render of
-  // that row will swap its content for the inline edit form.
+  // with `detail.entryId` when a row is tapped. Move to the contextual
+  // entry modal instead of replacing the row in place.
   const onEditEntry = (e: Event): void => {
     const detail = (e as CustomEvent<{ entryId: string }>).detail;
     if (detail === undefined) return;
-    setEditingEntryId(detail.entryId);
-    rerender();
+    const state = getState();
+    if (state.view !== "focus" || !state.expanded) return;
+    const record = currentRecord(state);
+    if (record === null || !record.entries.some((entry) => entry.id === detail.entryId)) return;
+    void commit(() => {
+      setState({
+        view: "entry",
+        expanded: true,
+        editingEntryId: detail.entryId,
+        captureSession: null,
+      });
+    }, { type: "modal", direction: "in" }).then(() => {
+      document.querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.entryEditForm}] input[name="value"]`,
+      )?.focus({ preventScroll: true });
+    });
   };
   document.addEventListener("rec-ord:edit-entry", onEditEntry);
   cleanups.push(() => document.removeEventListener("rec-ord:edit-entry", onEditEntry));

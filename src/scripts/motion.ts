@@ -22,6 +22,7 @@ gsap.registerPlugin(Flip);
 export type MotionTransition =
   | { type: "record"; direction: "up" | "down"; velocity?: number }
   | { type: "panel"; direction: "in" | "out"; velocity?: number }
+  | { type: "modal"; direction: "in" | "out"; velocity?: number }
   | { type: "expand"; direction: "in" | "out" }
   | { type: "grid"; direction: "in" | "out" }
   | { type: "fade" };
@@ -47,6 +48,12 @@ const SHARED_FLIP_PROPS = [
   "fontWeight",
   "letterSpacing",
   "lineHeight",
+].join(",");
+
+const MODAL_FLIP_PROPS = [
+  "backgroundColor",
+  "borderRadius",
+  "boxShadow",
 ].join(",");
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -82,7 +89,7 @@ function transitionDuration(velocity = 0): number {
 
 function clearInlineMotion(element: HTMLElement): void {
   gsap.set(element, {
-    clearProps: "transform,opacity,visibility,willChange,zIndex,position,top,left,width,height,margin,pointerEvents,backgroundColor,overflow,transformOrigin",
+    clearProps: "transform,opacity,visibility,willChange,zIndex,position,top,left,width,height,margin,pointerEvents,backgroundColor,borderRadius,boxShadow,overflow,transformOrigin",
   });
 }
 
@@ -248,6 +255,8 @@ function animateSharedLayout(
   state: CapturedFlipState,
   previousSharedIds: ReadonlySet<string>,
   absoluteTargets: boolean,
+  flipProps: string,
+  scaleTargets: boolean,
 ): Promise<void> {
   const sharedTargets = sharedElements(newElement).filter((element) => {
     const id = element.dataset.flipId;
@@ -265,21 +274,22 @@ function animateSharedLayout(
   gsap.set(sharedTargets, {
     position: "relative",
     zIndex: 3,
-    willChange: "transform,font-size,line-height,letter-spacing,color",
+    willChange: "transform,background-color,border-radius,box-shadow,font-size,line-height,letter-spacing,color",
   });
 
   const timeline = Flip.from(state, {
     targets: sharedTargets,
     // Grid transitions swap differently styled text nodes. Keeping those
     // targets in flow lets source typography reflow the destination row before
-    // Flip's first frame. Absolute targets preserve the captured source
-    // geometry; the reveal shield keeps the settled grid layout hidden until
-    // Flip restores the targets. Expand transitions keep their existing flow.
+    // Flip's first frame. Modal targets use absolute positioning so the
+    // surface can grow from its trigger without disturbing the destination
+    // layout; the reveal shield keeps non-shared content hidden until Flip
+    // restores the target.
     absolute: absoluteTargets,
     nested: true,
-    scale: false,
+    scale: scaleTargets,
     fade: false,
-    props: SHARED_FLIP_PROPS,
+    props: flipProps,
     duration: motionDurations.sharedLayout,
     ease: motionEases.shared,
     paused: true,
@@ -421,13 +431,14 @@ export function commit(
   const oldElement = mount.firstElementChild as HTMLElement | null;
   const oldRect = oldElement?.getBoundingClientRect();
   const mountRect = mount.getBoundingClientRect();
-  const shouldFlip = spec.type === "expand" || spec.type === "grid";
+  const shouldFlip = spec.type === "expand" || spec.type === "grid" || spec.type === "modal";
+  const flipProps = spec.type === "modal" ? MODAL_FLIP_PROPS : SHARED_FLIP_PROPS;
   const oldShared = oldElement === null ? [] : sharedElements(oldElement);
   const oldSharedIds = sharedElementIds(oldShared);
 
   if (oldElement !== null) gsap.killTweensOf(oldElement);
   const flipState = shouldFlip && oldShared.length > 0
-    ? Flip.getState(oldShared, { props: SHARED_FLIP_PROPS })
+    ? Flip.getState(oldShared, { props: flipProps })
     : null;
 
   update();
@@ -437,7 +448,7 @@ export function commit(
     return Promise.resolve();
   }
 
-  if (spec.type === "expand" || spec.type === "grid") {
+  if (spec.type === "expand" || spec.type === "grid" || spec.type === "modal") {
     return flipState === null
       ? animateLocalChange(mount, newElement)
       : animateSharedLayout(
@@ -445,7 +456,9 @@ export function commit(
           newElement,
           flipState,
           oldSharedIds,
-          spec.type === "grid",
+          spec.type === "grid" || spec.type === "modal",
+          flipProps,
+          spec.type === "modal",
         );
   }
 

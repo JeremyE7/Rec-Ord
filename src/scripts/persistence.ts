@@ -2,7 +2,7 @@
  * rec-ord — localStorage persistence
  *
  * Persists only the durable data (records + currentRecordId) under a single
- * key. The UI view (focus/expanded/addingEntry) is NOT persisted — on
+ * key. The UI view (focus/expanded/editingEntryId) is NOT persisted — on
  * reload the user reopens the app on the current focus, collapsed.
  *
  * Saves are debounced (200ms) to coalesce bursts of mutations (e.g. the

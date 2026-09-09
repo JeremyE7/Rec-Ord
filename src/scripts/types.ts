@@ -69,13 +69,13 @@ export interface CaptureSession {
 }
 
 /** The top-level view the app is showing. */
-export type View = "focus" | "new" | "grid";
+export type View = "focus" | "new" | "grid" | "entry" | "record-settings";
 
 /**
  * Full client-side app state.
  *
  * Persisted (records + currentRecordId): the user's data.
- * Resets on reload (view, expanded, addingEntry): clean reopen behavior.
+ * Resets on reload (view, expanded, editingEntryId): clean reopen behavior.
  */
 export interface AppState {
   records: Record[]; // ordered newest-record-first (records[0] = most recently created)
@@ -83,7 +83,7 @@ export interface AppState {
   routineConfig: RoutineConfig; // durable routine definitions and date overrides
   view: View;
   expanded: boolean; // long-press edit expansion of the current focus card
-  addingEntry: boolean; // whether the inline "+ new entry" form is open inside edit
+  editingEntryId: string | null; // entry being edited in the contextual modal surface
   activeTagFilter?: string | null; // transient grid filter; null = no filter (not persisted)
   activeRoutineId: string | null; // transient routine filter; null = all records
   captureSession: CaptureSession | null; // transient LOG TODAY queue

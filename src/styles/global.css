@@ -611,6 +611,47 @@ p {
   display: none;
 }
 
+.routine-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  padding: 12px 14px;
+  background: rgba(16, 16, 15, 0.72);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.routine-summary__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.routine-summary__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routine-summary__meta {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .routine-editor {
   padding: 16px;
   background: rgba(16, 16, 15, 0.78);
@@ -978,6 +1019,16 @@ p {
   white-space: nowrap;
 }
 
+.view-header__context {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .focus-view {
   position: relative;
   display: flex;
@@ -1169,6 +1220,47 @@ p {
   gap: 14px;
 }
 
+.editor-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: clamp(12px, 3vw, 28px);
+  overflow: hidden;
+  background: rgba(5, 5, 5, 0.86);
+  touch-action: none;
+}
+
+.editor-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 760px);
+  max-height: 100%;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+.editor-modal .view-header {
+  flex: none;
+  padding: clamp(18px, 4vw, 28px) clamp(18px, 4vw, 32px) 18px;
+}
+
+.editor-modal .editor-form {
+  flex: 1;
+  width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: clamp(18px, 4vw, 28px);
+  overflow-y: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .expanded-content {
   display: flex;
   flex: 1;
@@ -1247,7 +1339,7 @@ p {
 }
 
 .entry-edit-form {
-  gap: 12px;
+  gap: 20px;
 }
 
 .form-heading {
@@ -1743,7 +1835,7 @@ p {
   width: 100%;
 }
 
-.expanded-tags {
+.expanded-details {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1754,11 +1846,86 @@ p {
   border-radius: var(--radius-md);
 }
 
-.expanded-tags__form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+.expanded-details__header,
+.expanded-details__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  align-items: end;
+}
+
+.expanded-details__header {
+  align-items: flex-start;
+}
+
+.expanded-details__values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.expanded-details__item {
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.expanded-details__label {
+  color: var(--text-tertiary);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.expanded-details__value {
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.expanded-details__value--muted {
+  color: var(--text-tertiary);
+}
+
+.expanded-details__item .tag-pills {
+  margin-top: 0;
+}
+
+.expanded-details__header .button {
+  flex: none;
+}
+
+.expanded-details__item > .expanded-details__value {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expanded-details__item > .tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-height: 22px;
+  margin-top: 0;
+  overflow: hidden;
+}
+
+.expanded-details__item > .tag-pills .tag-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .grid-empty {

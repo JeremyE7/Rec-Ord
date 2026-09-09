@@ -20,6 +20,7 @@ import {
   updateListSwipeIndicator,
 } from "./motion";
 import { gestureMotion } from "./motion-tokens";
+import type { View } from "./types";
 
 export interface GestureHandlers {
   onSwipeUp?: (velocity?: number) => boolean | void;
@@ -30,7 +31,7 @@ export interface GestureHandlers {
 }
 
 export interface AttachOptions {
-  getView: () => "focus" | "new" | "grid";
+  getView: () => View;
   getExpanded: () => boolean;
   getHasRecords: () => boolean;
   canSwipeVertical: (direction: "up" | "down") => boolean;
@@ -82,9 +83,13 @@ function isInteractive(target: EventTarget | null): boolean {
   return target.closest("input, textarea, select, button, a, [contenteditable='true']") !== null;
 }
 
-function activeSurface(root: HTMLElement, view: "focus" | "new" | "grid"): HTMLElement | null {
+function activeSurface(root: HTMLElement, view: View): HTMLElement | null {
   if (view === "new") return root.querySelector<HTMLElement>("[data-new-record]");
   if (view === "focus") return root.querySelector<HTMLElement>("[data-focus-card]");
+  if (view === "entry") return root.querySelector<HTMLElement>("[data-entry-editor]");
+  if (view === "record-settings") {
+    return root.querySelector<HTMLElement>("[data-record-settings]");
+  }
   return null;
 }
 
@@ -229,7 +234,7 @@ export function attachGestures(options: AttachOptions): () => void {
     state.eligible =
       !isInteractive(event.target) &&
       view !== "grid" &&
-      (!insideScroll || view === "new" || canPullDown);
+      (!insideScroll || view !== "focus" || canPullDown);
     if (!state.eligible) return;
 
     if (!insideScroll) {
@@ -298,10 +303,11 @@ export function attachGestures(options: AttachOptions): () => void {
     const view = getView();
     const horizontal = Math.abs(dx) > Math.abs(dy);
 
-    if (getExpanded()) {
-      if (!horizontal && dy > 0) state.axis = "v";
-    } else if (view === "new") {
+    const editorView = view === "new" || view === "entry" || view === "record-settings";
+    if (editorView) {
       if (horizontal && dx < 0) state.axis = "h";
+    } else if (getExpanded()) {
+      if (!horizontal && dy > 0) state.axis = "v";
     } else if (view === "focus") {
       if (horizontal) state.axis = "h";
       if (!horizontal) state.axis = "v";

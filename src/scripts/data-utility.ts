@@ -268,7 +268,7 @@ function replaceState(data: PersistedState): boolean {
     routineConfig: restored.routineConfig,
     view: "focus",
     expanded: false,
-    addingEntry: false,
+    editingEntryId: null,
     activeRoutineId: null,
     activeTagFilter: null,
     captureSession: null,
@@ -286,6 +286,7 @@ function initializeDataUtility(): void {
   let trashCount = 0;
   let immediateItemId: string | null = null;
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeRoutineEditorId: string | null = null;
 
   const setStatus = (message: string, tone: StatusTone = "neutral"): void => {
     elements.status.textContent = message;
@@ -567,12 +568,54 @@ function initializeDataUtility(): void {
     return wrapper;
   };
 
+  const routineSchedule = (profile: RoutineProfile): string => {
+    if (profile.weekdays.length === 0) return "NO DAYS SET";
+    if (profile.weekdays.length === ROUTINE_WEEKDAYS.length) return "EVERY DAY";
+    return ROUTINE_WEEKDAYS
+      .filter((day) => profile.weekdays.includes(day.value))
+      .map((day) => day.label)
+      .join(" · ");
+  };
+
+  const renderRoutineSummary = (profile: RoutineProfile): HTMLElement => {
+    const wrapper = document.createElement("article");
+    wrapper.className = "routine-summary";
+    wrapper.setAttribute("role", "listitem");
+
+    const copy = document.createElement("div");
+    copy.className = "routine-summary__copy";
+    const name = document.createElement("strong");
+    name.className = "routine-summary__name";
+    name.textContent = profile.name;
+    const schedule = document.createElement("span");
+    schedule.className = "routine-summary__meta";
+    const tagSummary = profile.tags.length > 0 ? profile.tags.join(" + ") : "NO TAGS";
+    schedule.textContent = `${routineSchedule(profile)} · ${tagSummary}`;
+    copy.append(name, schedule);
+
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "button button--ghost button--compact";
+    edit.textContent = "EDIT";
+    edit.dataset.routineEdit = profile.id;
+    edit.setAttribute("aria-label", `Edit routine ${profile.name}`);
+
+    wrapper.append(copy, edit);
+    return wrapper;
+  };
+
   const refreshRoutines = (): void => {
     const profiles = getState().routineConfig.profiles;
+    if (activeRoutineEditorId !== null && !profiles.some((profile) => profile.id === activeRoutineEditorId)) {
+      activeRoutineEditorId = null;
+    }
     elements.routineList.replaceChildren();
     elements.routineEmpty.hidden = profiles.length > 0;
     for (const profile of profiles) {
-      elements.routineList.append(renderRoutineEditor(profile));
+      elements.routineList.append(renderRoutineSummary(profile));
+      if (profile.id === activeRoutineEditorId) {
+        elements.routineList.append(renderRoutineEditor(profile));
+      }
     }
     refreshOverrideOptions();
   };
@@ -602,12 +645,28 @@ function initializeDataUtility(): void {
           : profile,
       ),
     }));
+    activeRoutineEditorId = null;
     refreshRoutines();
     setStatus("ROUTINE SAVED", "success");
   };
 
   const onRoutineListClick = (event: MouseEvent): void => {
     if (busy || !(event.target instanceof Element)) return;
+    const edit = event.target.closest<HTMLButtonElement>("[data-routine-edit]");
+    if (edit !== null) {
+      const routineId = edit.dataset.routineEdit;
+      if (routineId === undefined) return;
+      activeRoutineEditorId = routineId;
+      refreshRoutines();
+      setStatus("EDIT ROUTINE");
+      requestAnimationFrame(() => {
+        elements.routineList.querySelector<HTMLInputElement>(
+          `[data-routine-id="${routineId}"] input[name="name"]`,
+        )?.focus({ preventScroll: true });
+      });
+      return;
+    }
+
     const remove = event.target.closest<HTMLButtonElement>("[data-routine-delete]");
     if (remove !== null) {
       const routineId = remove.dataset.routineDelete;
@@ -620,6 +679,7 @@ function initializeDataUtility(): void {
           override.routineId === routineId ? { ...override, routineId: null } : override,
         ),
       }));
+      if (activeRoutineEditorId === routineId) activeRoutineEditorId = null;
       refreshRoutines();
       setStatus("ROUTINE DELETED", "success");
       return;
@@ -673,6 +733,7 @@ function initializeDataUtility(): void {
       ...config,
       profiles: [...config.profiles, profile],
     }));
+    activeRoutineEditorId = profile.id;
     refreshRoutines();
     setStatus("ADD TAGS THEN SAVE", "neutral");
     requestAnimationFrame(() => {
@@ -1061,6 +1122,7 @@ function initializeDataUtility(): void {
   }, { signal });
   elements.dialog.addEventListener("close", () => {
     pendingBackup = null;
+    activeRoutineEditorId = null;
     showStep("home");
     resetSurfaceMotion();
     returnFocus?.focus({ preventScroll: true });

@@ -22,7 +22,7 @@ let state: AppState = {
   routineConfig: { profiles: [], overrides: [] },
   view: "focus",
   expanded: false,
-  addingEntry: false,
+  editingEntryId: null,
   activeRoutineId: null,
   captureSession: null,
 };

@@ -34,11 +34,9 @@ import {
 /* ---------------------------------------------------------------------------
  * Local UI state (not persisted)
  *
- * Some interactions need ephemeral state that should NOT be persisted and
- * should NOT live in the global store (because it's not part of the data
- * model — it's UI state for the two-tap delete confirmation, the inline
- * entry-edit form, etc.). We keep it here in module scope; it survives
- * re-renders within the session and resets on reload.
+ * Some interactions need ephemeral state that should NOT be persisted (for
+ * example, the two-tap delete confirmation). The editor destination itself is
+ * part of AppState so navigation remains explicit and renderers stay pure.
  * ------------------------------------------------------------------------- */
 
 interface DeleteConfirmLocal {
@@ -47,11 +45,6 @@ interface DeleteConfirmLocal {
 }
 
 const deleteConfirm: DeleteConfirmLocal = { recordId: null, timer: null };
-
-/** ID of the entry currently being inline-edited in the expanded focus
- *  view. `null` means no entry is being edited. Like `deleteConfirm`,
- *  this is ephemeral UI state — not persisted, not in the global store. */
-let editingEntryId: string | null = null;
 
 /**
  * Public API for the delete-confirm two-tap pattern. The app module
@@ -98,17 +91,6 @@ export function cancelDeleteConfirm(): void {
   deleteConfirm.timer = null;
 }
 
-/** Returns the id of the entry currently being inline-edited, or null. */
-export function getEditingEntryId(): string | null {
-  return editingEntryId;
-}
-
-/** Sets the id of the entry currently being inline-edited. Pass `null`
- *  to clear. The caller is responsible for triggering a re-render. */
-export function setEditingEntryId(id: string | null): void {
-  editingEntryId = id;
-}
-
 /** Subscribes to local re-render triggers (the delete-confirm timeout). */
 export function onRerender(handler: () => void): () => void {
   const listener = (): void => handler();
@@ -129,22 +111,22 @@ export function renderApp(state: AppState): HTMLElement {
     cancelDeleteConfirm();
   }
 
-  // If an entry is being inline-edited but the user navigated to a
-  // different record (or the entry no longer exists — e.g. it was the
-  // only entry and the record was deleted), clear the edit state so
-  // the next render shows the read-only row.
-  if (editingEntryId !== null) {
+  // If an entry is being edited in a modal but the user navigated to a different record
+  // (or the entry no longer exists), fall back to the read-only focus view.
+  if (state.editingEntryId !== null) {
     const currentRecord = state.records.find((r) => r.id === state.currentRecordId);
     const stillExists =
       currentRecord !== undefined &&
-      currentRecord.entries.some((e) => e.id === editingEntryId);
+      currentRecord.entries.some((e) => e.id === state.editingEntryId);
     if (!stillExists) {
-      editingEntryId = null;
+      return state.expanded ? renderFocusExpanded(state) : renderFocus(state);
     }
   }
 
   const view: View = state.view;
   if (view === "new") return renderNewRecord(state);
+  if (view === "entry") return renderEntryView(state);
+  if (view === "record-settings") return renderRecordSettingsView(state);
   if (state.records.length === 0) return renderEmpty();
   if (view === "grid") return renderGrid(state);
   // view === "focus"
@@ -345,86 +327,59 @@ function renderGridFilter(state: AppState): HTMLElement | null {
   return bar;
 }
 
-function renderExpandedTags(record: Record): HTMLElement {
+function renderExpandedDetails(record: Record): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.className = "expanded-tags";
+  wrap.className = "expanded-details";
   wrap.dataset.motionLayer = "details";
 
+  const header = document.createElement("div");
+  header.className = "expanded-details__header";
   const label = document.createElement("span");
   label.className = "form-field__label";
-  label.textContent = "TAGS";
-  wrap.append(label);
+  label.textContent = "RECORD SETTINGS";
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "button button--ghost button--compact";
+  edit.textContent = "EDIT RECORD";
+  edit.dataset.recordSettingsOpen = "true";
+  edit.dataset.flipId = `record-settings-${record.id}`;
+  edit.setAttribute("aria-label", `Edit settings for ${record.name}`);
+  header.append(label, edit);
+  wrap.append(header);
 
+  const values = document.createElement("div");
+  values.className = "expanded-details__values";
+
+  const tags = document.createElement("div");
+  tags.className = "expanded-details__item";
+  const tagsLabel = document.createElement("span");
+  tagsLabel.className = "expanded-details__label";
+  tagsLabel.textContent = "TAGS";
+  tags.append(tagsLabel);
   if (record.tags && record.tags.length > 0) {
-    wrap.append(renderTagPills(record.tags, "muted"));
+    tags.append(renderTagPills(record.tags, "muted"));
   } else {
     const empty = document.createElement("span");
-    empty.className = "tag-pills__empty";
-    empty.textContent = "NO TAGS — TAP TO ADD";
-    wrap.append(empty);
+    empty.className = "expanded-details__value expanded-details__value--muted";
+    empty.textContent = "NOT SET";
+    tags.append(empty);
   }
 
-  const form = document.createElement("form");
-  form.dataset.tagsForm = "true";
-  form.dataset.recordId = record.id;
-  form.className = "expanded-tags__form";
+  const quickStep = document.createElement("div");
+  quickStep.className = "expanded-details__item";
+  const quickStepLabel = document.createElement("span");
+  quickStepLabel.className = "expanded-details__label";
+  quickStepLabel.textContent = "QUICK STEP";
+  const quickStepValue = document.createElement("span");
+  quickStepValue.className = "expanded-details__value";
+  quickStepValue.textContent = record.quickStep === undefined
+    ? "NOT SET"
+    : `+${formatValueWithUnit(record.quickStep, record.unit)}`;
+  quickStep.append(quickStepLabel, quickStepValue);
 
-  const input = document.createElement("input");
-  input.type = "text";
-  input.name = "tags";
-  input.autocomplete = "off";
-  input.placeholder = "CHEST, PUSH";
-  input.value = (record.tags ?? []).join(", ");
-  input.className = "field-input field-input--compact uppercase";
-  input.setAttribute("aria-label", "Edit tags comma separated");
-
-  const save = document.createElement("button");
-  save.type = "submit";
-  save.className = "button button--ghost button--compact";
-  save.textContent = "SAVE TAGS";
-
-  form.append(input, save);
-  wrap.append(form);
-  wrap.append(renderQuickStepEditor(record));
+  values.append(tags, quickStep);
+  wrap.append(values);
   return wrap;
-}
-
-function renderQuickStepEditor(record: Record): HTMLElement {
-  const form = document.createElement("form");
-  form.dataset.quickStepForm = "true";
-  form.dataset.recordId = record.id;
-  form.className = "expanded-quick-step";
-
-  const label = document.createElement("label");
-  label.className = "form-field form-field--compact";
-  const header = document.createElement("span");
-  header.className = "form-field__header";
-  const name = document.createElement("span");
-  name.className = "form-field__label";
-  name.textContent = "QUICK STEP";
-  const hint = document.createElement("span");
-  hint.className = "form-field__hint";
-  hint.textContent = "Optional increment";
-  header.append(name, hint);
-
-  const input = document.createElement("input");
-  input.type = "number";
-  input.name = "quickStep";
-  input.min = "0.000001";
-  input.step = "any";
-  input.inputMode = "decimal";
-  input.value = record.quickStep === undefined ? "" : String(record.quickStep);
-  input.placeholder = "e.g. 2.5";
-  input.className = "field-input field-input--compact tabular-nums";
-  input.setAttribute("aria-label", "Quick value increment");
-  label.append(header, input);
-
-  const save = document.createElement("button");
-  save.type = "submit";
-  save.className = "button button--ghost button--compact";
-  save.textContent = "SAVE STEP";
-  form.append(label, save);
-  return form;
 }
 
 /* ---------------------------------------------------------------------------
@@ -536,8 +491,8 @@ function renderRecordListSwipeIndicator(): HTMLElement {
 
 function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTMLElement {
   // Collapsed mode distributes overview data across the available height.
-  // Expanded mode keeps a compact summary above the independently scrollable
-  // entry history and forms.
+  // Expanded mode keeps a compact read-only summary above the independently
+  // scrollable entry history and contextual actions.
   const inner = document.createElement("div");
   if (expanded) {
     inner.className = "record-summary record-summary--expanded";
@@ -561,7 +516,7 @@ function renderFocusInner(record: Record, latest: Entry, expanded: boolean): HTM
     inner.append(renderHero(record, latest, true));
     const prev = previousEntry(record);
     if (prev !== null) inner.append(renderStats(record, latest, prev));
-    inner.append(renderExpandedTags(record));
+     inner.append(renderExpandedDetails(record));
   } else {
     // === Top area: context + trend indicator + sparkline ==========
     // Uses the top margin space that was empty in the previous
@@ -824,7 +779,7 @@ function renderStats(
 }
 
 /* ---------------------------------------------------------------------------
- * Focus expanded (single card with history + form + delete)
+ * Focus expanded (single card with history + contextual actions + delete)
  * ------------------------------------------------------------------------- */
 
 function renderFocusExpandedSection(
@@ -858,7 +813,8 @@ function renderFocusExpandedSection(
 
   section.append(header, renderFocusInner(record, latest, true));
 
-  // Entry controls and history share one bounded native scroll region.
+  // Entry controls and history share one bounded native scroll region. Editing
+  // is deliberately not rendered inside either the card or a history row.
   const expandedWrap = document.createElement("div");
   expandedWrap.className = "expanded-content scroll-region";
   expandedWrap.dataset.motionLayer = "details";
@@ -872,37 +828,34 @@ function renderFocusExpandedSection(
     list.append(renderEntryRow(entry, record));
   }
 
-  // The composer stays above history so adding an entry never requires
+  // The action row stays above history so adding an entry never requires
   // scrolling through the entire record first.
   const addWrap = document.createElement("div");
   addWrap.className = "entry-composer";
 
-  if (state.addingEntry) {
-    addWrap.append(renderInlineAddEntryForm(record, session !== null));
-  } else {
-    const actions = document.createElement("div");
-    actions.className = "entry-composer__actions";
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "button button--primary button--compact";
-    toggle.textContent = session === null ? "ADD ENTRY" : "CONTINUE SESSION";
-    toggle.dataset.newEntryToggle = "true";
-    actions.append(toggle);
+  const actions = document.createElement("div");
+  actions.className = "entry-composer__actions";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "button button--primary button--compact";
+  toggle.textContent = session === null ? "ADD ENTRY" : "CONTINUE SESSION";
+  toggle.dataset.newEntryToggle = "true";
+  toggle.dataset.flipId = `entry-capture-${record.id}`;
+  actions.append(toggle);
 
-    if (record.entries.length > 0) {
-      const latestForRepeat = latestEntry(record);
-      if (latestForRepeat !== null) {
-        const repeat = document.createElement("button");
-        repeat.type = "button";
-        repeat.className = "button button--ghost button--compact";
-        repeat.textContent = `REPEAT ${formatValueWithUnit(latestForRepeat.value, record.unit)}`;
-        repeat.dataset.repeatEntry = "true";
-        repeat.setAttribute("aria-label", `Repeat last entry ${formatValueWithUnit(latestForRepeat.value, record.unit)}`);
-        actions.append(repeat);
-      }
+  if (record.entries.length > 0) {
+    const latestForRepeat = latestEntry(record);
+    if (latestForRepeat !== null) {
+      const repeat = document.createElement("button");
+      repeat.type = "button";
+      repeat.className = "button button--ghost button--compact";
+      repeat.textContent = `REPEAT ${formatValueWithUnit(latestForRepeat.value, record.unit)}`;
+      repeat.dataset.repeatEntry = "true";
+      repeat.setAttribute("aria-label", `Repeat last entry ${formatValueWithUnit(latestForRepeat.value, record.unit)}`);
+      actions.append(repeat);
     }
-    addWrap.append(actions);
   }
+  addWrap.append(actions);
   expandedWrap.append(addWrap, list);
 
   // DELETE RECORD (two-tap)
@@ -937,16 +890,10 @@ function renderFocusExpanded(state: AppState): HTMLElement {
 /* ---------------------------------------------------------------------------
  * Entry row (used inside the history list)
  *
- * Two visual states for the row, switched by the local `editingEntryId`
- * in render.ts:
- *   - read-only (default): value on the left, relative date + a
- *     "<" swipe hint on the right
- *   - editing: the content is REPLACED by the inline edit form
- *     (renderEntryEditForm below). Tapping the row dispatches
- *     `rec-ord:edit-entry`, app.ts sets `editingEntryId`, and the next
- *     render swaps the content. Swipe-to-delete is still wired on the
- *     same <li> so the two gestures stay distinct: tap → edit, swipe
- *     left → delete.
+ * Read-only row: value on the left, relative date + a "<" swipe hint on the
+ * right. Tapping the row opens a contextual editor modal. Swipe-to-delete
+ * stays wired on the same <li> so the two gestures remain distinct: tap →
+ * edit, swipe left → delete.
  * ------------------------------------------------------------------------- */
 
 function renderEntryRow(entry: Entry, record: Record): HTMLElement {
@@ -954,16 +901,11 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
   li.className = "entry-row";
   li.dataset.entryId = entry.id;
   li.dataset.entryRow = "true";
+  li.dataset.flipId = `entry-edit-${record.id}-${entry.id}`;
   li.setAttribute(
     "aria-label",
     `Entry: ${formatValueWithUnit(entry.value, record.unit)}, ${formatRelativeDate(entry.date).toLowerCase()}. Press Enter to edit or swipe left to delete.`,
   );
-
-  if (editingEntryId === entry.id) {
-    li.classList.add("entry-row--editing");
-    li.append(renderEntryEditForm(entry, record));
-    return li;
-  }
 
   li.tabIndex = 0;
   li.setAttribute("role", "button");
@@ -992,25 +934,7 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
 }
 
 /* ---------------------------------------------------------------------------
- * Inline entry-edit form (replaces the row's read-only content while
- * the user is correcting a value/date).
- *
- * The form keeps the row's `flex items-center justify-between` layout:
- *   - top row: value input + unit hint + date input (one line)
- *   - bottom row: SAVE + CANCEL text buttons (right-aligned)
- *
- * Inputs are borderless, transparent, with a thin accent border on
- * focus — matches the rest of the design's "bare" input feel.
- *
- * Markers:
- *   - data-entry-edit-form="true"   — wire() finds it and binds submit
- *   - data-entry-id="<id>"          — wire() / onEditEntrySubmit read
- *                                     it to know which entry to update
- *   - data-cancel-edit (on CANCEL)  — wire() binds click → cancel
- *
- * Pressing Escape inside the form also cancels (the app's keydown
- * handler is no-op while focused in a form input, so the form gets
- * its own keydown listener).
+ * Contextual editor surfaces
  * ------------------------------------------------------------------------- */
 
 function renderField(
@@ -1040,12 +964,60 @@ function renderField(
   return label;
 }
 
-function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
+function renderEditorHeader(titleText: string, context: string): HTMLElement {
+  const header = document.createElement("header");
+  header.className = "view-header";
+  header.dataset.motionLayer = "header";
+
+  const heading = document.createElement("div");
+  heading.className = "view-header__heading";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "CONTEXTUAL EDITOR";
+
+  const title = document.createElement("h1");
+  title.id = "editor-title";
+  title.className = "view-header__title";
+  title.textContent = titleText;
+
+  const contextLine = document.createElement("p");
+  contextLine.className = "view-header__context";
+  contextLine.textContent = context;
+
+  heading.append(eyebrow, title, contextLine);
+  header.append(heading);
+  return header;
+}
+
+function renderEditorSurface(
+  viewClass: string,
+  titleText: string,
+  context: string,
+  flipId: string,
+  form: HTMLFormElement,
+): HTMLElement {
+  const section = document.createElement("section");
+  section.className = `${viewClass} editor-view app-view`;
+  section.setAttribute("role", "dialog");
+  section.setAttribute("aria-modal", "true");
+  section.setAttribute("aria-labelledby", "editor-title");
+
+  const modal = document.createElement("div");
+  modal.className = "editor-modal app-surface";
+  modal.dataset.flipId = flipId;
+  modal.dataset.motionLayer = "local";
+  modal.append(renderEditorHeader(titleText, context), form);
+  section.append(modal);
+  return section;
+}
+
+function renderEntryEditForm(entry: Entry, record: Record): HTMLFormElement {
   const form = document.createElement("form");
-  form.className = "entry-edit-form";
+  form.className = "entry-edit-form editor-form app-surface scroll-region";
   form.dataset.entryEditForm = "true";
   form.dataset.entryId = entry.id;
-  form.dataset.motionLayer = "local";
+  form.dataset.motionLayer = "form";
 
   // --- Top row: value + unit + date ---------------------------------------
   const topRow = document.createElement("div");
@@ -1081,31 +1053,69 @@ function renderEntryEditForm(entry: Entry, record: Record): HTMLElement {
   save.className = "button button--primary button--compact";
   save.textContent = "SAVE";
 
-  bottomRow.append(save);
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "button button--ghost button--compact";
+  cancel.textContent = "CANCEL";
+  cancel.dataset.cancelEditor = "true";
+
+  bottomRow.append(save, cancel);
 
   form.append(topRow, bottomRow);
   return form;
 }
 
-/* ---------------------------------------------------------------------------
- * Inline add-entry form (inside the expanded focus)
- * ------------------------------------------------------------------------- */
+function renderEntryView(state: AppState): HTMLElement {
+  const record = findCurrentRecord(state);
+  if (record === null) return renderEmpty();
 
-function renderInlineAddEntryForm(record: Record, captureMode = false): HTMLElement {
+  if (state.editingEntryId !== null) {
+    const entry = record.entries.find((item) => item.id === state.editingEntryId);
+    if (entry === undefined) return state.expanded ? renderFocusExpanded(state) : renderFocus(state);
+    return renderEntryEditView(entry, record);
+  }
+
+  return renderEntryCaptureView(state, record);
+}
+
+function renderEntryEditView(entry: Entry, record: Record): HTMLElement {
+  const form = renderEntryEditForm(entry, record);
+  const section = renderEditorSurface(
+    "entry-editor-view",
+    "Edit entry",
+    `${record.name} · ${record.unit}`,
+    `entry-edit-${record.id}-${entry.id}`,
+    form,
+  );
+  section.dataset.entryEditor = "true";
+  return section;
+}
+
+function renderEntryCaptureView(state: AppState, record: Record): HTMLElement {
+  const form = renderEntryCaptureForm(record, state);
+  const section = renderEditorSurface(
+    "entry-editor-view",
+    "Add entry",
+    `${record.name} · ${record.unit}`,
+    `entry-capture-${record.id}`,
+    form,
+  );
+  section.dataset.entryEditor = "true";
+  return section;
+}
+
+function renderEntryCaptureForm(record: Record, state: AppState): HTMLFormElement {
   const form = document.createElement("form");
-  form.className = "entry-form app-surface";
+  form.className = "entry-form editor-form app-surface scroll-region";
   form.dataset.addEntryForm = "true";
-  form.dataset.motionLayer = "local";
+  form.dataset.motionLayer = "form";
 
   const heading = document.createElement("div");
   heading.className = "form-heading";
-  const title = document.createElement("h3");
-  title.className = "form-heading__title";
-  title.textContent = "New entry";
   const description = document.createElement("p");
   description.className = "form-heading__description";
   description.textContent = `Add the latest value for ${record.name}.`;
-  heading.append(title, description);
+  heading.append(description);
 
   const fields = document.createElement("div");
   fields.className = "form-grid";
@@ -1144,7 +1154,7 @@ function renderInlineAddEntryForm(record: Record, captureMode = false): HTMLElem
   const actions = document.createElement("div");
   actions.className = "entry-form__actions";
   actions.append(submit);
-  if (captureMode) {
+  if (state.captureSession !== null) {
     const skip = document.createElement("button");
     skip.type = "button";
     skip.className = "button button--ghost button--compact";
@@ -1153,8 +1163,82 @@ function renderInlineAddEntryForm(record: Record, captureMode = false): HTMLElem
     actions.append(skip);
   }
 
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "button button--ghost button--compact";
+  cancel.textContent = "CANCEL";
+  cancel.dataset.cancelEditor = "true";
+  actions.append(cancel);
+
   form.append(heading, fields, actions);
   return form;
+}
+
+function renderRecordSettingsView(state: AppState): HTMLElement {
+  const record = findCurrentRecord(state);
+  if (record === null) return renderEmpty();
+
+  const form = document.createElement("form");
+  form.className = "record-settings-form editor-form app-surface scroll-region";
+  form.dataset.recordSettingsForm = "true";
+  form.dataset.recordId = record.id;
+  form.dataset.motionLayer = "form";
+
+  const heading = document.createElement("div");
+  heading.className = "form-heading";
+  const description = document.createElement("p");
+  description.className = "form-heading__description";
+  description.textContent = "Keep the record quiet in focus. Configure only the details that shape capture.";
+  heading.append(description);
+
+  const tagsInput = document.createElement("input");
+  tagsInput.type = "text";
+  tagsInput.name = "tags";
+  tagsInput.autocomplete = "off";
+  tagsInput.placeholder = "CHEST, PUSH";
+  tagsInput.value = (record.tags ?? []).join(", ");
+  tagsInput.className = "field-input uppercase";
+
+  const quickStepInput = document.createElement("input");
+  quickStepInput.type = "number";
+  quickStepInput.name = "quickStep";
+  quickStepInput.min = "0.000001";
+  quickStepInput.step = "any";
+  quickStepInput.inputMode = "decimal";
+  quickStepInput.placeholder = "e.g. 2.5";
+  quickStepInput.value = record.quickStep === undefined ? "" : String(record.quickStep);
+  quickStepInput.className = "field-input tabular-nums";
+
+  const fields = document.createElement("div");
+  fields.className = "form-grid";
+  fields.append(
+    renderField("TAGS", tagsInput, "Optional · comma separated · max 5"),
+    renderField("QUICK STEP", quickStepInput, `Used for ${record.unit} quick values`),
+  );
+
+  const actions = document.createElement("div");
+  actions.className = "entry-form__actions";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "button button--primary button--compact";
+  save.textContent = "SAVE SETTINGS";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "button button--ghost button--compact";
+  cancel.textContent = "CANCEL";
+  cancel.dataset.cancelEditor = "true";
+  actions.append(save, cancel);
+
+  form.append(heading, fields, actions);
+  const section = renderEditorSurface(
+    "record-settings-view",
+    "Record settings",
+    `${record.name} · ${record.unit}`,
+    `record-settings-${record.id}`,
+    form,
+  );
+  section.dataset.recordSettings = "true";
+  return section;
 }
 
 function renderQuickValueButtons(record: Record): HTMLElement | null {
@@ -1496,15 +1580,21 @@ function renderRoutineContext(state: AppState): HTMLElement {
 
   const actions = document.createElement("div");
   actions.className = "routine-context__actions";
+  const pending = routine === null
+    ? []
+    : recordsForRoutine(state.records, routine)
+      .filter((record) => !recordLoggedOnDate(record, todayISO()));
   if (routine !== null) {
     const useToday = document.createElement("button");
     useToday.type = "button";
     useToday.className = "button button--ghost button--compact";
     useToday.textContent = active?.id === routine.id ? "LOG TODAY" : "USE TODAY";
-    const pending = recordsForRoutine(state.records, routine)
-      .filter((record) => !recordLoggedOnDate(record, todayISO()));
     if (active?.id === routine.id) {
       useToday.dataset.startRoutine = "true";
+      const firstPending = pending[0];
+      if (firstPending !== undefined) {
+        useToday.dataset.flipId = `entry-capture-${firstPending.id}`;
+      }
       useToday.disabled = pending.length === 0;
     } else {
       useToday.dataset.routineFilter = routine.id;
@@ -1664,6 +1754,8 @@ function renderGridCell(
 export const VIEW_ATTRS = {
   focusCard: "data-focus-card",
   newRecord: "data-new-record",
+  entryEditor: "data-entry-editor",
+  recordSettings: "data-record-settings",
   grid: "data-grid",
   newRecordForm: "data-new-record-form",
   addEntryForm: "data-add-entry-form",
@@ -1676,6 +1768,9 @@ export const VIEW_ATTRS = {
   unitPreset: "data-unit-preset",
   direction: "data-direction",
   entryEditForm: "data-entry-edit-form",
+  recordSettingsForm: "data-record-settings-form",
+  recordSettingsOpen: "data-record-settings-open",
+  cancelEditor: "data-cancel-editor",
   repeatEntry: "data-repeat-entry",
   tagFilter: "data-tag-filter",
   routineFilter: "data-routine-filter",
@@ -1683,6 +1778,4 @@ export const VIEW_ATTRS = {
   startRoutine: "data-start-routine",
   skipCapture: "data-skip-capture",
   quickValue: "data-quick-value",
-  tagsForm: "data-tags-form",
-  quickStepForm: "data-quick-step-form",
 } as const;
