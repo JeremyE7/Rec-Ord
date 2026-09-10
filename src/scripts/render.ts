@@ -340,7 +340,7 @@ function renderExpandedDetails(record: Record): HTMLElement {
   const edit = document.createElement("button");
   edit.type = "button";
   edit.className = "button button--ghost button--compact";
-  edit.textContent = "EDIT RECORD";
+  edit.append(renderModalTitleLabel("EDIT RECORD", `record-settings-${record.id}-title`));
   edit.dataset.recordSettingsOpen = "true";
   edit.dataset.flipId = `record-settings-${record.id}`;
   edit.setAttribute("aria-label", `Edit settings for ${record.name}`);
@@ -782,6 +782,13 @@ function renderStats(
  * Focus expanded (single card with history + contextual actions + delete)
  * ------------------------------------------------------------------------- */
 
+function renderModalTitleLabel(text: string, id: string): HTMLSpanElement {
+  const label = document.createElement("span");
+  label.dataset.modalTitleId = id;
+  label.textContent = text;
+  return label;
+}
+
 function renderFocusExpandedSection(
   record: Record,
   latest: Entry,
@@ -838,9 +845,15 @@ function renderFocusExpandedSection(
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "button button--primary button--compact";
-  toggle.textContent = session === null ? "ADD ENTRY" : "CONTINUE SESSION";
+  const entryCaptureFlipId = `entry-capture-${record.id}`;
+  toggle.append(
+    renderModalTitleLabel(
+      session === null ? "ADD ENTRY" : "CONTINUE SESSION",
+      `${entryCaptureFlipId}-title`,
+    ),
+  );
   toggle.dataset.newEntryToggle = "true";
-  toggle.dataset.flipId = `entry-capture-${record.id}`;
+  toggle.dataset.flipId = entryCaptureFlipId;
   actions.append(toggle);
 
   if (record.entries.length > 0) {
@@ -912,6 +925,7 @@ function renderEntryRow(entry: Entry, record: Record): HTMLElement {
 
   const left = document.createElement("span");
   left.className = "font-body font-medium tabular-nums";
+  left.dataset.modalTitleId = `entry-edit-${record.id}-${entry.id}-title`;
   left.textContent = formatValueWithUnit(entry.value, record.unit);
 
   const rightWrap = document.createElement("span");
@@ -964,7 +978,7 @@ function renderField(
   return label;
 }
 
-function renderEditorHeader(titleText: string, context: string): HTMLElement {
+function renderEditorHeader(titleText: string, context: string, titleFlipId: string): HTMLElement {
   const header = document.createElement("header");
   header.className = "view-header";
   header.dataset.motionLayer = "header";
@@ -974,15 +988,18 @@ function renderEditorHeader(titleText: string, context: string): HTMLElement {
 
   const eyebrow = document.createElement("span");
   eyebrow.className = "eyebrow";
+  eyebrow.dataset.modalReveal = "true";
   eyebrow.textContent = "CONTEXTUAL EDITOR";
 
   const title = document.createElement("h1");
   title.id = "editor-title";
   title.className = "view-header__title";
+  title.dataset.modalTitleId = titleFlipId;
   title.textContent = titleText;
 
   const contextLine = document.createElement("p");
   contextLine.className = "view-header__context";
+  contextLine.dataset.modalReveal = "true";
   contextLine.textContent = context;
 
   heading.append(eyebrow, title, contextLine);
@@ -1007,7 +1024,8 @@ function renderEditorSurface(
   modal.className = "editor-modal app-surface";
   modal.dataset.flipId = flipId;
   modal.dataset.motionLayer = "local";
-  modal.append(renderEditorHeader(titleText, context), form);
+  form.dataset.modalReveal = "true";
+  modal.append(renderEditorHeader(titleText, context, `${flipId}-title`), form);
   section.append(modal);
   return section;
 }
@@ -1232,7 +1250,7 @@ function renderRecordSettingsView(state: AppState): HTMLElement {
   form.append(heading, fields, actions);
   const section = renderEditorSurface(
     "record-settings-view",
-    "Record settings",
+    "Edit record",
     `${record.name} · ${record.unit}`,
     `record-settings-${record.id}`,
     form,

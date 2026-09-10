@@ -39,6 +39,34 @@ interface ActiveCelebration {
 
 type CapturedFlipState = ReturnType<typeof Flip.getState>;
 
+interface ModalSurfaceStyle {
+  backgroundColor: string;
+  borderColor: string;
+  borderRadius: string;
+  borderStyle: string;
+  borderWidth: string;
+  boxShadow: string;
+}
+
+interface ModalTitleSnapshot {
+  element: HTMLElement;
+  id: string;
+  rect: DOMRect;
+  color: string;
+}
+
+interface ModalExitSnapshot {
+  element: HTMLElement;
+  rect: DOMRect;
+  surface: ModalSurfaceStyle;
+  title: ModalTitleSnapshot | null;
+}
+
+interface ModalRadiusTransition {
+  from: number;
+  to: number;
+}
+
 const SHARED_FLIP_PROPS = [
   "backgroundColor",
   "borderRadius",
@@ -52,7 +80,6 @@ const SHARED_FLIP_PROPS = [
 
 const MODAL_FLIP_PROPS = [
   "backgroundColor",
-  "borderRadius",
   "boxShadow",
 ].join(",");
 
@@ -89,7 +116,7 @@ function transitionDuration(velocity = 0): number {
 
 function clearInlineMotion(element: HTMLElement): void {
   gsap.set(element, {
-    clearProps: "transform,opacity,visibility,willChange,zIndex,position,top,left,width,height,margin,pointerEvents,backgroundColor,borderRadius,boxShadow,overflow,transformOrigin",
+    clearProps: "transform,opacity,visibility,willChange,zIndex,position,top,left,width,height,margin,pointerEvents,backgroundColor,borderRadius,borderTopLeftRadius,borderTopRightRadius,borderBottomRightRadius,borderBottomLeftRadius,boxShadow,overflow,filter,transformOrigin",
   });
 }
 
@@ -166,6 +193,103 @@ function sharedElementIds(elements: Iterable<HTMLElement>): Set<string> {
     if (id !== undefined && id !== "") ids.add(id);
   }
   return ids;
+}
+
+function editorModal(root: HTMLElement): HTMLElement | null {
+  return root.matches(".editor-modal")
+    ? root
+    : root.querySelector<HTMLElement>(".editor-modal");
+}
+
+function captureModalExitSnapshot(root: HTMLElement): ModalExitSnapshot | null {
+  const element = editorModal(root);
+  if (element === null) return null;
+  const style = getComputedStyle(element);
+  const title = element.querySelector<HTMLElement>("[data-modal-title-id]");
+  const titleId = title?.dataset.modalTitleId;
+  const titleStyle = title === null ? null : getComputedStyle(title);
+  return {
+    element,
+    rect: element.getBoundingClientRect(),
+    surface: {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      borderRadius: style.borderRadius,
+      borderStyle: style.borderStyle,
+      borderWidth: style.borderWidth,
+      boxShadow: style.boxShadow,
+    },
+    title: title !== null && titleId !== undefined && titleStyle !== null
+      ? {
+          element: title,
+          id: titleId,
+          rect: title.getBoundingClientRect(),
+          color: titleStyle.color,
+        }
+      : null,
+  };
+}
+
+function computedBorderRadius(element: HTMLElement): number | null {
+  const radius = Number.parseFloat(getComputedStyle(element).borderTopLeftRadius);
+  return Number.isFinite(radius) ? radius : null;
+}
+
+function captureModalRadiusSources(elements: Iterable<HTMLElement>): Map<string, number> {
+  const radii = new Map<string, number>();
+  for (const element of elements) {
+    const id = element.dataset.flipId;
+    const radius = computedBorderRadius(element);
+    if (id !== undefined && id !== "" && radius !== null) radii.set(id, radius);
+  }
+  return radii;
+}
+
+function modalRadiusTransition(
+  sources: ReadonlyMap<string, number> | null,
+  root: HTMLElement,
+): ModalRadiusTransition | null {
+  if (sources === null) return null;
+  for (const element of sharedElements(root)) {
+    const id = element.dataset.flipId;
+    if (id === undefined || id === "") continue;
+    const from = sources.get(id);
+    const to = computedBorderRadius(element);
+    if (from !== undefined && to !== null) return { from, to };
+  }
+  return null;
+}
+
+function compensateModalBorderRadius(element: HTMLElement, radius: number): void {
+  const scaleX = Math.max(0.001, Number(gsap.getProperty(element, "scaleX")) || 1);
+  const scaleY = Math.max(0.001, Number(gsap.getProperty(element, "scaleY")) || 1);
+  const radiusX = `${radius / scaleX}px`;
+  const radiusY = `${radius / scaleY}px`;
+  gsap.set(element, {
+    borderTopLeftRadius: `${radiusX} ${radiusY}`,
+    borderTopRightRadius: `${radiusX} ${radiusY}`,
+    borderBottomRightRadius: `${radiusX} ${radiusY}`,
+    borderBottomLeftRadius: `${radiusX} ${radiusY}`,
+  });
+}
+
+function animateModalBorderRadius(
+  timeline: gsap.core.Timeline,
+  element: HTMLElement,
+  transition: ModalRadiusTransition,
+): void {
+  const radius = { value: transition.from };
+  compensateModalBorderRadius(element, radius.value);
+  timeline.to(
+    radius,
+    {
+      value: transition.to,
+      duration: motionDurations.sharedLayout,
+      ease: motionEases.shared,
+      onUpdate: () => compensateModalBorderRadius(element, radius.value),
+    },
+    0,
+  );
 }
 
 function createRevealShield(mount: HTMLElement): HTMLElement {
@@ -249,6 +373,211 @@ function animateLocalChange(mount: HTMLElement, newElement: HTMLElement): Promis
   return trackTransition(animation, mount, () => clearMany(localTargets));
 }
 
+function animateModalExit(
+  mount: HTMLElement,
+  newElement: HTMLElement,
+  snapshot: ModalExitSnapshot,
+  destinationTarget: HTMLElement,
+  mountRect: DOMRect,
+  radiusTransition: ModalRadiusTransition | null,
+): Promise<void> {
+  const oldModal = snapshot.element;
+  const oldRect = snapshot.rect;
+  const targetRect = destinationTarget.getBoundingClientRect();
+  if (oldRect.width <= 0 || oldRect.height <= 0 || targetRect.width <= 0 || targetRect.height <= 0) {
+    return animateLocalChange(mount, newElement);
+  }
+
+  const oldLeft = oldRect.left - mountRect.left;
+  const oldTop = oldRect.top - mountRect.top;
+  const oldCenterX = oldLeft + oldRect.width / 2;
+  const oldCenterY = oldTop + oldRect.height / 2;
+  const targetLeft = targetRect.left - mountRect.left;
+  const targetTop = targetRect.top - mountRect.top;
+  const targetCenterX = targetLeft + targetRect.width / 2;
+  const targetCenterY = targetTop + targetRect.height / 2;
+  const destinationStyle = getComputedStyle(destinationTarget);
+  const destinationTitle = snapshot.title === null
+    ? null
+    : [...newElement.querySelectorAll<HTMLElement>("[data-modal-title-id]")]
+        .find((element) => element.dataset.modalTitleId === snapshot.title?.id) ?? null;
+  const destinationTitleRect = destinationTitle?.getBoundingClientRect() ?? null;
+  const destinationTitleStyle = destinationTitle === null
+    ? null
+    : getComputedStyle(destinationTitle);
+  const titleOverlay = snapshot.title !== null && destinationTitleRect !== null && destinationTitleStyle !== null
+    && snapshot.title.rect.width > 0
+    && snapshot.title.rect.height > 0
+    && destinationTitleRect.width > 0
+    && destinationTitleRect.height > 0
+    ? {
+        element: snapshot.title.element,
+        from: snapshot.title.rect,
+        to: destinationTitleRect,
+        color: destinationTitleStyle.color,
+      }
+    : null;
+  const contentTargets = [...oldModal.querySelectorAll<HTMLElement>("[data-modal-reveal]")];
+  const wasInert = newElement.inert;
+  const shield = createRevealShield(mount);
+
+  removeDuplicateIds(oldModal);
+  oldModal.inert = true;
+  oldModal.setAttribute("aria-hidden", "true");
+  oldModal.dataset.motionExit = "true";
+  newElement.inert = true;
+  mount.append(oldModal);
+  if (titleOverlay !== null) {
+    titleOverlay.element.remove();
+    titleOverlay.element.setAttribute("aria-hidden", "true");
+    titleOverlay.element.inert = true;
+    mount.append(titleOverlay.element);
+  }
+
+  gsap.set(oldModal, {
+    position: "absolute",
+    top: oldTop,
+    left: oldLeft,
+    width: oldRect.width,
+    height: oldRect.height,
+    maxWidth: "none",
+    maxHeight: "none",
+    margin: 0,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    transformOrigin: "50% 50%",
+    backgroundColor: snapshot.surface.backgroundColor,
+    borderColor: snapshot.surface.borderColor,
+    borderRadius: snapshot.surface.borderRadius,
+    borderStyle: snapshot.surface.borderStyle,
+    borderWidth: snapshot.surface.borderWidth,
+    boxShadow: snapshot.surface.boxShadow,
+    overflow: "hidden",
+    pointerEvents: "none",
+    willChange: "transform,background-color,border-color,border-radius,border-width,box-shadow,opacity",
+    zIndex: 3,
+  });
+
+  if (titleOverlay !== null) {
+    const titleLeft = titleOverlay.from.left - mountRect.left;
+    const titleTop = titleOverlay.from.top - mountRect.top;
+    gsap.set(titleOverlay.element, {
+      position: "absolute",
+      top: titleTop,
+      left: titleLeft,
+      width: titleOverlay.from.width,
+      height: titleOverlay.from.height,
+      maxWidth: "none",
+      maxHeight: "none",
+      margin: 0,
+      padding: 0,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      transformOrigin: "50% 50%",
+      color: snapshot.title?.color,
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      willChange: "transform,color,opacity",
+      zIndex: 4,
+    });
+  }
+
+  if (contentTargets.length > 0) {
+    gsap.set(contentTargets, {
+      willChange: "opacity,filter",
+    });
+  }
+
+  const timeline = gsap.timeline({ paused: true, defaults: { overwrite: "auto" } });
+  if (contentTargets.length > 0) {
+    timeline.to(
+      contentTargets,
+      {
+        autoAlpha: 0,
+        filter: "blur(10px)",
+        duration: motionDurations.local,
+        ease: motionEases.state,
+        stagger: 0.025,
+      },
+      0,
+    );
+  }
+
+  timeline.to(
+    oldModal,
+    {
+      x: targetCenterX - oldCenterX,
+      y: targetCenterY - oldCenterY,
+      scaleX: targetRect.width / oldRect.width,
+      scaleY: targetRect.height / oldRect.height,
+      backgroundColor: destinationStyle.backgroundColor,
+      borderColor: destinationStyle.borderColor,
+      borderStyle: destinationStyle.borderStyle,
+      borderWidth: destinationStyle.borderWidth,
+      boxShadow: destinationStyle.boxShadow,
+      duration: motionDurations.sharedLayout,
+      ease: motionEases.shared,
+    },
+    0,
+  );
+  if (radiusTransition !== null) {
+    animateModalBorderRadius(timeline, oldModal, radiusTransition);
+  }
+
+  if (titleOverlay !== null) {
+    const titleOldLeft = titleOverlay.from.left - mountRect.left;
+    const titleOldTop = titleOverlay.from.top - mountRect.top;
+    const titleOldCenterX = titleOldLeft + titleOverlay.from.width / 2;
+    const titleOldCenterY = titleOldTop + titleOverlay.from.height / 2;
+    const titleTargetLeft = titleOverlay.to.left - mountRect.left;
+    const titleTargetTop = titleOverlay.to.top - mountRect.top;
+    const titleTargetCenterX = titleTargetLeft + titleOverlay.to.width / 2;
+    const titleTargetCenterY = titleTargetTop + titleOverlay.to.height / 2;
+
+    timeline.to(
+      titleOverlay.element,
+      {
+        x: titleTargetCenterX - titleOldCenterX,
+        y: titleTargetCenterY - titleOldCenterY,
+        scaleX: titleOverlay.to.width / titleOverlay.from.width,
+        scaleY: titleOverlay.to.height / titleOverlay.from.height,
+        color: titleOverlay.color,
+        duration: motionDurations.sharedLayout,
+        ease: motionEases.shared,
+      },
+      0,
+    );
+  }
+
+  const handoffTargets = titleOverlay === null
+    ? [oldModal, shield]
+    : [oldModal, titleOverlay.element, shield];
+  timeline.to(
+    handoffTargets,
+    {
+      autoAlpha: 0,
+      duration: motionDurations.micro,
+      ease: motionEases.state,
+    },
+    ">",
+  );
+
+  timeline.play();
+  return trackTransition(timeline, mount, () => {
+    oldModal.remove();
+    titleOverlay?.element.remove();
+    shield.remove();
+    newElement.inert = wasInert;
+    clearInlineMotion(oldModal);
+    if (titleOverlay !== null) clearInlineMotion(titleOverlay.element);
+    clearMany(contentTargets);
+  });
+}
+
 function animateSharedLayout(
   mount: HTMLElement,
   newElement: HTMLElement,
@@ -257,6 +586,7 @@ function animateSharedLayout(
   absoluteTargets: boolean,
   flipProps: string,
   scaleTargets: boolean,
+  radiusTransition: ModalRadiusTransition | null,
 ): Promise<void> {
   const sharedTargets = sharedElements(newElement).filter((element) => {
     const id = element.dataset.flipId;
@@ -270,21 +600,31 @@ function animateSharedLayout(
   const wasInert = newElement.inert;
   const shield = createRevealShield(mount);
   const restoreOverflow = exposeSharedOverflow(sharedTargets, newElement);
+  const revealTargets = scaleTargets
+    ? [...newElement.querySelectorAll<HTMLElement>("[data-modal-reveal]")]
+    : [];
   newElement.inert = true;
   gsap.set(sharedTargets, {
     position: "relative",
     zIndex: 3,
     willChange: "transform,background-color,border-radius,box-shadow,font-size,line-height,letter-spacing,color",
   });
+  if (revealTargets.length > 0) {
+    gsap.set(revealTargets, {
+      autoAlpha: 0,
+      y: 8,
+      filter: "blur(10px)",
+      willChange: "transform,opacity,filter",
+    });
+  }
 
   const timeline = Flip.from(state, {
     targets: sharedTargets,
     // Grid transitions swap differently styled text nodes. Keeping those
     // targets in flow lets source typography reflow the destination row before
-    // Flip's first frame. Modal targets use absolute positioning so the
+    // Flip's first frame. Modal surfaces use absolute positioning so the
     // surface can grow from its trigger without disturbing the destination
-    // layout; the reveal shield keeps non-shared content hidden until Flip
-    // restores the target.
+    // layout; their secondary content reveals after the shared surface settles.
     absolute: absoluteTargets,
     nested: true,
     scale: scaleTargets,
@@ -294,6 +634,28 @@ function animateSharedLayout(
     ease: motionEases.shared,
     paused: true,
   });
+
+  if (scaleTargets && radiusTransition !== null && sharedTargets.length === 1) {
+    const [sharedTarget] = sharedTargets;
+    if (sharedTarget !== undefined) {
+      animateModalBorderRadius(timeline, sharedTarget, radiusTransition);
+    }
+  }
+
+  if (revealTargets.length > 0) {
+    timeline.to(
+      revealTargets,
+      {
+        autoAlpha: 1,
+        y: 0,
+        filter: "blur(0px)",
+        duration: motionDurations.local,
+        ease: motionEases.settle,
+        stagger: 0.025,
+      },
+      Math.max(0, motionDurations.sharedLayout - motionDurations.local * 0.65),
+    );
+  }
 
   timeline.to(
     shield,
@@ -311,6 +673,7 @@ function animateSharedLayout(
     restoreOverflow();
     newElement.inert = wasInert;
     clearMany(sharedTargets);
+    clearMany(revealTargets);
   });
 }
 
@@ -435,6 +798,12 @@ export function commit(
   const flipProps = spec.type === "modal" ? MODAL_FLIP_PROPS : SHARED_FLIP_PROPS;
   const oldShared = oldElement === null ? [] : sharedElements(oldElement);
   const oldSharedIds = sharedElementIds(oldShared);
+  const modalRadiusSources = spec.type === "modal"
+    ? captureModalRadiusSources(oldShared)
+    : null;
+  const modalExitSnapshot = spec.type === "modal" && spec.direction === "out" && oldElement !== null
+    ? captureModalExitSnapshot(oldElement)
+    : null;
 
   if (oldElement !== null) gsap.killTweensOf(oldElement);
   const flipState = shouldFlip && oldShared.length > 0
@@ -449,17 +818,39 @@ export function commit(
   }
 
   if (spec.type === "expand" || spec.type === "grid" || spec.type === "modal") {
-    return flipState === null
-      ? animateLocalChange(mount, newElement)
-      : animateSharedLayout(
+    if (flipState === null) return animateLocalChange(mount, newElement);
+
+    const radiusTransition = spec.type === "modal"
+      ? modalRadiusTransition(modalRadiusSources, newElement)
+      : null;
+
+    if (spec.type === "modal" && spec.direction === "out" && modalExitSnapshot !== null) {
+      const destinationTarget = sharedElements(newElement).find((element) => {
+        const id = element.dataset.flipId;
+        return id !== undefined && oldSharedIds.has(id);
+      });
+      if (destinationTarget !== undefined) {
+        return animateModalExit(
           mount,
           newElement,
-          flipState,
-          oldSharedIds,
-          spec.type === "grid" || spec.type === "modal",
-          flipProps,
-          spec.type === "modal",
+          modalExitSnapshot,
+          destinationTarget,
+          mountRect,
+          radiusTransition,
         );
+      }
+    }
+
+    return animateSharedLayout(
+      mount,
+      newElement,
+      flipState,
+      oldSharedIds,
+      spec.type === "grid" || spec.type === "modal",
+      flipProps,
+      spec.type === "modal",
+      radiusTransition,
+    );
   }
 
   if (spec.type === "fade") {
