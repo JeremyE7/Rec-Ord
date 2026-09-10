@@ -39,32 +39,39 @@ interface ActiveCelebration {
 
 type CapturedFlipState = ReturnType<typeof Flip.getState>;
 
-interface ModalSurfaceStyle {
-  backgroundColor: string;
-  borderColor: string;
-  borderRadius: string;
-  borderStyle: string;
-  borderWidth: string;
-  boxShadow: string;
+interface ModalTitleStyle {
+  color: string;
+  boxSizing: string;
+  fontFamily: string;
+  fontSize: string;
+  fontStyle: string;
+  fontWeight: string;
+  letterSpacing: string;
+  lineHeight: string;
+  textAlign: string;
+  textTransform: string;
+  whiteSpace: string;
 }
 
 interface ModalTitleSnapshot {
   element: HTMLElement;
   id: string;
   rect: DOMRect;
-  color: string;
+  style: ModalTitleStyle;
+}
+
+interface ModalTitleHandoff {
+  element: HTMLElement;
+  destination: HTMLElement;
+  from: DOMRect;
+  to: DOMRect;
+  destinationColor: string;
 }
 
 interface ModalExitSnapshot {
   element: HTMLElement;
   rect: DOMRect;
-  surface: ModalSurfaceStyle;
   title: ModalTitleSnapshot | null;
-}
-
-interface ModalRadiusTransition {
-  from: number;
-  to: number;
 }
 
 const SHARED_FLIP_PROPS = [
@@ -78,10 +85,8 @@ const SHARED_FLIP_PROPS = [
   "lineHeight",
 ].join(",");
 
-const MODAL_FLIP_PROPS = [
-  "backgroundColor",
-  "boxShadow",
-].join(",");
+const MODAL_FLIP_PROPS = "";
+const MODAL_TITLE_STYLE_START = 0.5;
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const PERSONAL_BEST_CONFETTI = [
@@ -201,94 +206,194 @@ function editorModal(root: HTMLElement): HTMLElement | null {
     : root.querySelector<HTMLElement>(".editor-modal");
 }
 
-function captureModalExitSnapshot(root: HTMLElement): ModalExitSnapshot | null {
-  const element = editorModal(root);
-  if (element === null) return null;
+function modalTitleStyle(element: HTMLElement): ModalTitleStyle {
   const style = getComputedStyle(element);
-  const title = element.querySelector<HTMLElement>("[data-modal-title-id]");
-  const titleId = title?.dataset.modalTitleId;
-  const titleStyle = title === null ? null : getComputedStyle(title);
   return {
-    element,
-    rect: element.getBoundingClientRect(),
-    surface: {
-      backgroundColor: style.backgroundColor,
-      borderColor: style.borderColor,
-      borderRadius: style.borderRadius,
-      borderStyle: style.borderStyle,
-      borderWidth: style.borderWidth,
-      boxShadow: style.boxShadow,
-    },
-    title: title !== null && titleId !== undefined && titleStyle !== null
-      ? {
-          element: title,
-          id: titleId,
-          rect: title.getBoundingClientRect(),
-          color: titleStyle.color,
-        }
-      : null,
+    color: style.color,
+    boxSizing: style.boxSizing,
+    fontFamily: style.fontFamily,
+    fontSize: style.fontSize,
+    fontStyle: style.fontStyle,
+    fontWeight: style.fontWeight,
+    letterSpacing: style.letterSpacing,
+    lineHeight: style.lineHeight,
+    textAlign: style.textAlign,
+    textTransform: style.textTransform,
+    whiteSpace: style.whiteSpace,
   };
 }
 
-function computedBorderRadius(element: HTMLElement): number | null {
-  const radius = Number.parseFloat(getComputedStyle(element).borderTopLeftRadius);
-  return Number.isFinite(radius) ? radius : null;
-}
+function captureModalTitleSnapshots(root: HTMLElement): Map<string, ModalTitleSnapshot> {
+  const snapshots = new Map<string, ModalTitleSnapshot>();
+  for (const element of root.querySelectorAll<HTMLElement>("[data-modal-title-id]")) {
+    const id = element.dataset.modalTitleId;
+    const rect = element.getBoundingClientRect();
+    if (id === undefined || id === "" || rect.width <= 0 || rect.height <= 0) continue;
 
-function captureModalRadiusSources(elements: Iterable<HTMLElement>): Map<string, number> {
-  const radii = new Map<string, number>();
-  for (const element of elements) {
-    const id = element.dataset.flipId;
-    const radius = computedBorderRadius(element);
-    if (id !== undefined && id !== "" && radius !== null) radii.set(id, radius);
+    snapshots.set(id, {
+      element,
+      id,
+      rect,
+      style: modalTitleStyle(element),
+    });
   }
-  return radii;
+  return snapshots;
 }
 
-function modalRadiusTransition(
-  sources: ReadonlyMap<string, number> | null,
+function captureModalTitleSnapshot(root: HTMLElement): ModalTitleSnapshot | null {
+  for (const snapshot of captureModalTitleSnapshots(root).values()) return snapshot;
+  return null;
+}
+
+function captureModalExitSnapshot(root: HTMLElement): ModalExitSnapshot | null {
+  const element = editorModal(root);
+  if (element === null) return null;
+  return {
+    element,
+    rect: element.getBoundingClientRect(),
+    title: captureModalTitleSnapshot(element),
+  };
+}
+
+function prepareModalTitleHandoff(
+  mount: HTMLElement,
   root: HTMLElement,
-): ModalRadiusTransition | null {
-  if (sources === null) return null;
-  for (const element of sharedElements(root)) {
-    const id = element.dataset.flipId;
-    if (id === undefined || id === "") continue;
-    const from = sources.get(id);
-    const to = computedBorderRadius(element);
-    if (from !== undefined && to !== null) return { from, to };
+  snapshot: ModalTitleSnapshot,
+  mountRect: DOMRect,
+): ModalTitleHandoff | null {
+  const destination = [...root.querySelectorAll<HTMLElement>("[data-modal-title-id]")]
+    .find((element) => element.dataset.modalTitleId === snapshot.id);
+  const destinationRect = destination?.getBoundingClientRect();
+  if (
+    destination === undefined ||
+    destinationRect === undefined ||
+    destinationRect.width <= 0 ||
+    destinationRect.height <= 0
+  ) {
+    return null;
+  }
+
+  const destinationColor = getComputedStyle(destination).color;
+  snapshot.element.remove();
+  snapshot.element.setAttribute("aria-hidden", "true");
+  snapshot.element.inert = true;
+  mount.append(snapshot.element);
+  gsap.set(snapshot.element, {
+    position: "absolute",
+    top: snapshot.rect.top - mountRect.top,
+    left: snapshot.rect.left - mountRect.left,
+    width: snapshot.rect.width,
+    height: snapshot.rect.height,
+    maxWidth: "none",
+    maxHeight: "none",
+    margin: 0,
+    padding: 0,
+    display: "block",
+    boxSizing: snapshot.style.boxSizing,
+    x: 0,
+    y: 0,
+    scaleX: 1,
+    scaleY: 1,
+    transformOrigin: "50% 50%",
+    color: snapshot.style.color,
+    fontFamily: snapshot.style.fontFamily,
+    fontSize: snapshot.style.fontSize,
+    fontStyle: snapshot.style.fontStyle,
+    fontWeight: snapshot.style.fontWeight,
+    letterSpacing: snapshot.style.letterSpacing,
+    lineHeight: snapshot.style.lineHeight,
+    textAlign: snapshot.style.textAlign,
+    textTransform: snapshot.style.textTransform,
+    whiteSpace: "nowrap",
+    pointerEvents: "none",
+    willChange: "transform,opacity",
+    zIndex: 4,
+  });
+  gsap.set(destination, {
+    autoAlpha: 0,
+    position: "relative",
+    willChange: "opacity",
+    zIndex: 4,
+  });
+
+  return {
+    element: snapshot.element,
+    destination,
+    from: snapshot.rect,
+    to: destinationRect,
+    destinationColor,
+  };
+}
+
+function prepareModalTitleHandoffFromSnapshots(
+  mount: HTMLElement,
+  root: HTMLElement,
+  snapshots: ReadonlyMap<string, ModalTitleSnapshot>,
+  mountRect: DOMRect,
+): ModalTitleHandoff | null {
+  for (const destination of root.querySelectorAll<HTMLElement>("[data-modal-title-id]")) {
+    const id = destination.dataset.modalTitleId;
+    if (id === undefined) continue;
+    const snapshot = snapshots.get(id);
+    if (snapshot !== undefined) {
+      return prepareModalTitleHandoff(mount, root, snapshot, mountRect);
+    }
   }
   return null;
 }
 
-function compensateModalBorderRadius(element: HTMLElement, radius: number): void {
-  const scaleX = Math.max(0.001, Number(gsap.getProperty(element, "scaleX")) || 1);
-  const scaleY = Math.max(0.001, Number(gsap.getProperty(element, "scaleY")) || 1);
-  const radiusX = `${radius / scaleX}px`;
-  const radiusY = `${radius / scaleY}px`;
-  gsap.set(element, {
-    borderTopLeftRadius: `${radiusX} ${radiusY}`,
-    borderTopRightRadius: `${radiusX} ${radiusY}`,
-    borderBottomRightRadius: `${radiusX} ${radiusY}`,
-    borderBottomLeftRadius: `${radiusX} ${radiusY}`,
-  });
-}
-
-function animateModalBorderRadius(
+function animateModalTitleHandoff(
   timeline: gsap.core.Timeline,
-  element: HTMLElement,
-  transition: ModalRadiusTransition,
+  handoff: ModalTitleHandoff,
+  mountRect: DOMRect,
 ): void {
-  const radius = { value: transition.from };
-  compensateModalBorderRadius(element, radius.value);
+  const fromLeft = handoff.from.left - mountRect.left;
+  const fromTop = handoff.from.top - mountRect.top;
+  const fromCenterX = fromLeft + handoff.from.width / 2;
+  const fromCenterY = fromTop + handoff.from.height / 2;
+  const toLeft = handoff.to.left - mountRect.left;
+  const toTop = handoff.to.top - mountRect.top;
+  const toCenterX = toLeft + handoff.to.width / 2;
+  const toCenterY = toTop + handoff.to.height / 2;
+
   timeline.to(
-    radius,
+    handoff.element,
     {
-      value: transition.to,
+      x: toCenterX - fromCenterX,
+      y: toCenterY - fromCenterY,
+      scaleX: handoff.to.width / handoff.from.width,
+      scaleY: handoff.to.height / handoff.from.height,
       duration: motionDurations.sharedLayout,
       ease: motionEases.shared,
-      onUpdate: () => compensateModalBorderRadius(element, radius.value),
     },
     0,
+  );
+}
+
+function animateModalTitleStyleHandoff(
+  timeline: gsap.core.Timeline,
+  handoff: ModalTitleHandoff,
+): void {
+  const start = motionDurations.sharedLayout * MODAL_TITLE_STYLE_START;
+  const duration = motionDurations.local;
+  timeline.to(
+    handoff.element,
+    {
+      autoAlpha: 0,
+      color: handoff.destinationColor,
+      duration,
+      ease: motionEases.state,
+    },
+    start,
+  );
+  timeline.to(
+    handoff.destination,
+    {
+      autoAlpha: 1,
+      duration,
+      ease: motionEases.state,
+    },
+    start,
   );
 }
 
@@ -379,7 +484,6 @@ function animateModalExit(
   snapshot: ModalExitSnapshot,
   destinationTarget: HTMLElement,
   mountRect: DOMRect,
-  radiusTransition: ModalRadiusTransition | null,
 ): Promise<void> {
   const oldModal = snapshot.element;
   const oldRect = snapshot.rect;
@@ -396,27 +500,6 @@ function animateModalExit(
   const targetTop = targetRect.top - mountRect.top;
   const targetCenterX = targetLeft + targetRect.width / 2;
   const targetCenterY = targetTop + targetRect.height / 2;
-  const destinationStyle = getComputedStyle(destinationTarget);
-  const destinationTitle = snapshot.title === null
-    ? null
-    : [...newElement.querySelectorAll<HTMLElement>("[data-modal-title-id]")]
-        .find((element) => element.dataset.modalTitleId === snapshot.title?.id) ?? null;
-  const destinationTitleRect = destinationTitle?.getBoundingClientRect() ?? null;
-  const destinationTitleStyle = destinationTitle === null
-    ? null
-    : getComputedStyle(destinationTitle);
-  const titleOverlay = snapshot.title !== null && destinationTitleRect !== null && destinationTitleStyle !== null
-    && snapshot.title.rect.width > 0
-    && snapshot.title.rect.height > 0
-    && destinationTitleRect.width > 0
-    && destinationTitleRect.height > 0
-    ? {
-        element: snapshot.title.element,
-        from: snapshot.title.rect,
-        to: destinationTitleRect,
-        color: destinationTitleStyle.color,
-      }
-    : null;
   const contentTargets = [...oldModal.querySelectorAll<HTMLElement>("[data-modal-reveal]")];
   const wasInert = newElement.inert;
   const shield = createRevealShield(mount);
@@ -427,12 +510,6 @@ function animateModalExit(
   oldModal.dataset.motionExit = "true";
   newElement.inert = true;
   mount.append(oldModal);
-  if (titleOverlay !== null) {
-    titleOverlay.element.remove();
-    titleOverlay.element.setAttribute("aria-hidden", "true");
-    titleOverlay.element.inert = true;
-    mount.append(titleOverlay.element);
-  }
 
   gsap.set(oldModal, {
     position: "absolute",
@@ -448,47 +525,19 @@ function animateModalExit(
     scaleX: 1,
     scaleY: 1,
     transformOrigin: "50% 50%",
-    backgroundColor: snapshot.surface.backgroundColor,
-    borderColor: snapshot.surface.borderColor,
-    borderRadius: snapshot.surface.borderRadius,
-    borderStyle: snapshot.surface.borderStyle,
-    borderWidth: snapshot.surface.borderWidth,
-    boxShadow: snapshot.surface.boxShadow,
     overflow: "hidden",
     pointerEvents: "none",
-    willChange: "transform,background-color,border-color,border-radius,border-width,box-shadow,opacity",
+    willChange: "transform,opacity",
     zIndex: 3,
   });
 
-  if (titleOverlay !== null) {
-    const titleLeft = titleOverlay.from.left - mountRect.left;
-    const titleTop = titleOverlay.from.top - mountRect.top;
-    gsap.set(titleOverlay.element, {
-      position: "absolute",
-      top: titleTop,
-      left: titleLeft,
-      width: titleOverlay.from.width,
-      height: titleOverlay.from.height,
-      maxWidth: "none",
-      maxHeight: "none",
-      margin: 0,
-      padding: 0,
-      x: 0,
-      y: 0,
-      scaleX: 1,
-      scaleY: 1,
-      transformOrigin: "50% 50%",
-      color: snapshot.title?.color,
-      whiteSpace: "nowrap",
-      pointerEvents: "none",
-      willChange: "transform,color,opacity",
-      zIndex: 4,
-    });
-  }
+  const titleHandoff = snapshot.title === null
+    ? null
+    : prepareModalTitleHandoff(mount, newElement, snapshot.title, mountRect);
 
   if (contentTargets.length > 0) {
     gsap.set(contentTargets, {
-      willChange: "opacity,filter",
+      willChange: "opacity",
     });
   }
 
@@ -498,7 +547,6 @@ function animateModalExit(
       contentTargets,
       {
         autoAlpha: 0,
-        filter: "blur(10px)",
         duration: motionDurations.local,
         ease: motionEases.state,
         stagger: 0.025,
@@ -514,48 +562,20 @@ function animateModalExit(
       y: targetCenterY - oldCenterY,
       scaleX: targetRect.width / oldRect.width,
       scaleY: targetRect.height / oldRect.height,
-      backgroundColor: destinationStyle.backgroundColor,
-      borderColor: destinationStyle.borderColor,
-      borderStyle: destinationStyle.borderStyle,
-      borderWidth: destinationStyle.borderWidth,
-      boxShadow: destinationStyle.boxShadow,
       duration: motionDurations.sharedLayout,
       ease: motionEases.shared,
     },
     0,
   );
-  if (radiusTransition !== null) {
-    animateModalBorderRadius(timeline, oldModal, radiusTransition);
+
+  if (titleHandoff !== null) {
+    animateModalTitleHandoff(timeline, titleHandoff, mountRect);
+    animateModalTitleStyleHandoff(timeline, titleHandoff);
   }
 
-  if (titleOverlay !== null) {
-    const titleOldLeft = titleOverlay.from.left - mountRect.left;
-    const titleOldTop = titleOverlay.from.top - mountRect.top;
-    const titleOldCenterX = titleOldLeft + titleOverlay.from.width / 2;
-    const titleOldCenterY = titleOldTop + titleOverlay.from.height / 2;
-    const titleTargetLeft = titleOverlay.to.left - mountRect.left;
-    const titleTargetTop = titleOverlay.to.top - mountRect.top;
-    const titleTargetCenterX = titleTargetLeft + titleOverlay.to.width / 2;
-    const titleTargetCenterY = titleTargetTop + titleOverlay.to.height / 2;
-
-    timeline.to(
-      titleOverlay.element,
-      {
-        x: titleTargetCenterX - titleOldCenterX,
-        y: titleTargetCenterY - titleOldCenterY,
-        scaleX: titleOverlay.to.width / titleOverlay.from.width,
-        scaleY: titleOverlay.to.height / titleOverlay.from.height,
-        color: titleOverlay.color,
-        duration: motionDurations.sharedLayout,
-        ease: motionEases.shared,
-      },
-      0,
-    );
-  }
-
-  const handoffTargets = titleOverlay === null
+  const handoffTargets = titleHandoff === null
     ? [oldModal, shield]
-    : [oldModal, titleOverlay.element, shield];
+    : [oldModal, titleHandoff.element, shield];
   timeline.to(
     handoffTargets,
     {
@@ -565,15 +585,21 @@ function animateModalExit(
     },
     ">",
   );
+  if (titleHandoff !== null) {
+    timeline.set(titleHandoff.destination, { autoAlpha: 1 }, ">");
+  }
 
   timeline.play();
   return trackTransition(timeline, mount, () => {
     oldModal.remove();
-    titleOverlay?.element.remove();
+    titleHandoff?.element.remove();
     shield.remove();
     newElement.inert = wasInert;
     clearInlineMotion(oldModal);
-    if (titleOverlay !== null) clearInlineMotion(titleOverlay.element);
+    if (titleHandoff !== null) {
+      clearInlineMotion(titleHandoff.element);
+      clearInlineMotion(titleHandoff.destination);
+    }
     clearMany(contentTargets);
   });
 }
@@ -586,7 +612,8 @@ function animateSharedLayout(
   absoluteTargets: boolean,
   flipProps: string,
   scaleTargets: boolean,
-  radiusTransition: ModalRadiusTransition | null,
+  mountRect: DOMRect,
+  modalTitleSnapshots: ReadonlyMap<string, ModalTitleSnapshot> | null,
 ): Promise<void> {
   const sharedTargets = sharedElements(newElement).filter((element) => {
     const id = element.dataset.flipId;
@@ -599,6 +626,14 @@ function animateSharedLayout(
   // text nodes animate above it without clone scaling or a final DOM swap.
   const wasInert = newElement.inert;
   const shield = createRevealShield(mount);
+  const titleHandoff = modalTitleSnapshots === null
+    ? null
+    : prepareModalTitleHandoffFromSnapshots(
+        mount,
+        newElement,
+        modalTitleSnapshots,
+        mountRect,
+      );
   const restoreOverflow = exposeSharedOverflow(sharedTargets, newElement);
   const revealTargets = scaleTargets
     ? [...newElement.querySelectorAll<HTMLElement>("[data-modal-reveal]")]
@@ -607,14 +642,13 @@ function animateSharedLayout(
   gsap.set(sharedTargets, {
     position: "relative",
     zIndex: 3,
-    willChange: "transform,background-color,border-radius,box-shadow,font-size,line-height,letter-spacing,color",
+    willChange: "transform",
   });
   if (revealTargets.length > 0) {
     gsap.set(revealTargets, {
       autoAlpha: 0,
       y: 8,
-      filter: "blur(10px)",
-      willChange: "transform,opacity,filter",
+      willChange: "transform,opacity",
     });
   }
 
@@ -635,11 +669,9 @@ function animateSharedLayout(
     paused: true,
   });
 
-  if (scaleTargets && radiusTransition !== null && sharedTargets.length === 1) {
-    const [sharedTarget] = sharedTargets;
-    if (sharedTarget !== undefined) {
-      animateModalBorderRadius(timeline, sharedTarget, radiusTransition);
-    }
+  if (titleHandoff !== null) {
+    animateModalTitleHandoff(timeline, titleHandoff, mountRect);
+    animateModalTitleStyleHandoff(timeline, titleHandoff);
   }
 
   if (revealTargets.length > 0) {
@@ -648,7 +680,6 @@ function animateSharedLayout(
       {
         autoAlpha: 1,
         y: 0,
-        filter: "blur(0px)",
         duration: motionDurations.local,
         ease: motionEases.settle,
         stagger: 0.025,
@@ -657,8 +688,11 @@ function animateSharedLayout(
     );
   }
 
+  const handoffTargets = titleHandoff === null
+    ? [shield]
+    : [shield, titleHandoff.element];
   timeline.to(
-    shield,
+    handoffTargets,
     {
       autoAlpha: 0,
       duration: motionDurations.local,
@@ -666,6 +700,9 @@ function animateSharedLayout(
     },
     ">",
   );
+  if (titleHandoff !== null) {
+    timeline.set(titleHandoff.destination, { autoAlpha: 1 }, ">");
+  }
 
   timeline.play();
   return trackTransition(timeline, mount, () => {
@@ -674,6 +711,11 @@ function animateSharedLayout(
     newElement.inert = wasInert;
     clearMany(sharedTargets);
     clearMany(revealTargets);
+    if (titleHandoff !== null) {
+      titleHandoff.element.remove();
+      clearInlineMotion(titleHandoff.element);
+      clearInlineMotion(titleHandoff.destination);
+    }
   });
 }
 
@@ -798,11 +840,11 @@ export function commit(
   const flipProps = spec.type === "modal" ? MODAL_FLIP_PROPS : SHARED_FLIP_PROPS;
   const oldShared = oldElement === null ? [] : sharedElements(oldElement);
   const oldSharedIds = sharedElementIds(oldShared);
-  const modalRadiusSources = spec.type === "modal"
-    ? captureModalRadiusSources(oldShared)
-    : null;
   const modalExitSnapshot = spec.type === "modal" && spec.direction === "out" && oldElement !== null
     ? captureModalExitSnapshot(oldElement)
+    : null;
+  const modalEntryTitleSnapshots = spec.type === "modal" && spec.direction === "in" && oldElement !== null
+    ? captureModalTitleSnapshots(oldElement)
     : null;
 
   if (oldElement !== null) gsap.killTweensOf(oldElement);
@@ -820,10 +862,6 @@ export function commit(
   if (spec.type === "expand" || spec.type === "grid" || spec.type === "modal") {
     if (flipState === null) return animateLocalChange(mount, newElement);
 
-    const radiusTransition = spec.type === "modal"
-      ? modalRadiusTransition(modalRadiusSources, newElement)
-      : null;
-
     if (spec.type === "modal" && spec.direction === "out" && modalExitSnapshot !== null) {
       const destinationTarget = sharedElements(newElement).find((element) => {
         const id = element.dataset.flipId;
@@ -836,7 +874,6 @@ export function commit(
           modalExitSnapshot,
           destinationTarget,
           mountRect,
-          radiusTransition,
         );
       }
     }
@@ -849,7 +886,8 @@ export function commit(
       spec.type === "grid" || spec.type === "modal",
       flipProps,
       spec.type === "modal",
-      radiusTransition,
+      mountRect,
+      modalEntryTitleSnapshots,
     );
   }
 
