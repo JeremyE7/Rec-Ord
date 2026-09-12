@@ -1113,6 +1113,45 @@ p {
   flex: none;
 }
 
+.hero-value-trigger {
+  display: inline-flex;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.hero-value--editable {
+  border-radius: var(--radius-sm);
+  outline: 0;
+  cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.hero-value--editable:focus-visible {
+  box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 4px var(--accent);
+}
+
+.latest-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.latest-entry-meta__hint {
+  color: var(--text-tertiary);
+}
+
 .personal-best-celebration {
   position: absolute;
   inset: 0;

@@ -27,6 +27,7 @@ const state: PersistedState = {
     ],
     overrides: [{ date: "2026-09-10", routineId: null }],
   },
+  activeRoutineId: "push-day",
 };
 
 function backupFile(value: unknown): File {
@@ -59,6 +60,20 @@ describe("backup format", () => {
 
     expect(parsed.data.records[0]?.tags).toEqual(["CHEST", "PUSH"]);
     expect(parsed.data.routineConfig).toEqual({ profiles: [], overrides: [] });
+    expect(parsed.data.activeRoutineId).toBeNull();
+  });
+
+  it("rejects an active routine that references a missing profile", async () => {
+    await expect(
+      parseBackupFile(
+        backupFile({
+          format: "rec-ord-backup",
+          version: 2,
+          exportedAt: "2026-09-09T12:00:00.000Z",
+          data: { ...state, activeRoutineId: "missing" },
+        }),
+      ),
+    ).rejects.toThrow("active routine does not exist");
   });
 
   it("rejects routine overrides that reference a missing profile", async () => {

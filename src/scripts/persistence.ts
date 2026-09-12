@@ -1,9 +1,10 @@
 /**
  * rec-ord — localStorage persistence
  *
- * Persists only the durable data (records + currentRecordId) under a single
- * key. The UI view (focus/expanded/editingEntryId) is NOT persisted — on
- * reload the user reopens the app on the current focus, collapsed.
+ * Persists durable data plus the user's active routine choice under a single
+ * key. The UI view (focus/expanded/editingEntryId/captureSession) is NOT
+ * persisted — on reload the user reopens the app on the current focus,
+ * collapsed.
  *
  * Saves are debounced (200ms) to coalesce bursts of mutations (e.g. the
  * multiple state changes during a swipe-release).
@@ -30,6 +31,13 @@ function isPersistedState(value: unknown): value is PersistedState {
   if (
     v.routineConfig !== undefined &&
     (typeof v.routineConfig !== "object" || v.routineConfig === null)
+  ) {
+    return false;
+  }
+  if (
+    v.activeRoutineId !== undefined &&
+    v.activeRoutineId !== null &&
+    typeof v.activeRoutineId !== "string"
   ) {
     return false;
   }
@@ -79,6 +87,7 @@ export function loadState(): PersistedState | null {
         records: [],
         currentRecordId: null,
         routineConfig: emptyRoutineConfig(),
+        activeRoutineId: null,
       };
     }
     const parsed: unknown = JSON.parse(raw);
@@ -115,6 +124,7 @@ export function normalize(loaded: PersistedState | null): PersistedState {
       records: [],
       currentRecordId: null,
       routineConfig: emptyRoutineConfig(),
+      activeRoutineId: null,
     };
   }
   // Re-sort each record's entries newest-first by date. A corrupt entry that
@@ -148,10 +158,19 @@ export function normalize(loaded: PersistedState | null): PersistedState {
       ? loaded.currentRecordId
       : (records[0]?.id ?? null);
 
+  const routineConfig = normalizeRoutineConfig(loaded.routineConfig);
+  const loadedActiveRoutineId = (loaded as { activeRoutineId?: unknown }).activeRoutineId;
+  const activeRoutineId =
+    typeof loadedActiveRoutineId === "string" &&
+      routineConfig.profiles.some((profile) => profile.id === loadedActiveRoutineId)
+      ? loadedActiveRoutineId
+      : null;
+
   return {
     records,
     currentRecordId,
-    routineConfig: normalizeRoutineConfig(loaded.routineConfig),
+    routineConfig,
+    activeRoutineId,
   };
 }
 
@@ -245,8 +264,9 @@ export function saveState(
   records: PersistedState["records"],
   currentRecordId: string | null,
   routineConfig: RoutineConfig,
+  activeRoutineId: string | null,
 ): void {
-  pendingState = { records, currentRecordId, routineConfig };
+  pendingState = { records, currentRecordId, routineConfig, activeRoutineId };
   if (saveTimer !== null) return;
   saveTimer = setTimeout(flush, DEBOUNCE_MS);
 }

@@ -17,6 +17,7 @@
 import type { AppState, Entry, Record, RoutineProfile, View } from "./types";
 import {
   formatDelta,
+  formatEntryDate,
   formatRelativeDate,
   formatValueForUnit,
   getAllTags,
@@ -720,9 +721,33 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
   const value = document.createElement("h1");
   value.id = "hero-value";
   value.dataset.hero = "true";
-  value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 whitespace-nowrap [overflow-wrap:normal] overflow-visible`;
-  value.textContent = formatValueForUnit(latest.value, record.unit);
   value.dataset.flipId = `record-value-${record.id}`;
+  value.className = `font-display font-black leading-[0.85] tracking-[-0.05em] text-accent ${heroFontSize} tabular-nums max-w-full min-w-0 whitespace-nowrap [overflow-wrap:normal] overflow-visible`;
+
+  const valueText = document.createElement("span");
+  valueText.textContent = formatValueForUnit(latest.value, record.unit);
+  value.append(valueText);
+
+  let valueMount: HTMLElement = value;
+  if (compact) {
+    // Keep the original h1 as the record-value shared element. A separate,
+    // tightly-sized wrapper owns the modal surface ID so the two transitions
+    // never compete for the same data-flip-id.
+    const editTrigger = document.createElement("div");
+    editTrigger.className = "hero-value-trigger hero-value--editable";
+    editTrigger.dataset.flipId = `entry-edit-${record.id}-${latest.id}`;
+    editTrigger.dataset.latestEntryEdit = "true";
+    editTrigger.dataset.entryId = latest.id;
+    editTrigger.tabIndex = 0;
+    editTrigger.setAttribute("role", "button");
+    editTrigger.setAttribute(
+      "aria-label",
+      `Latest entry ${formatValueWithUnit(latest.value, record.unit)}, ${formatEntryDate(latest.date).toLowerCase()}. Hold to edit value and date.`,
+    );
+    valueText.dataset.modalTitleId = `entry-edit-${record.id}-${latest.id}-title`;
+    editTrigger.append(value);
+    valueMount = editTrigger;
+  }
 
   // Unit: displayed BELOW the value as a secondary label.
   const unit = document.createElement("div");
@@ -731,7 +756,18 @@ function renderHero(record: Record, latest: Entry, compact: boolean): HTMLElemen
     : "font-body text-xl tracking-[0.2em] uppercase text-ink-muted mt-2";
   unit.textContent = record.unit;
 
-  heroWrap.append(value, unit);
+  heroWrap.append(valueMount, unit);
+  if (compact) {
+    const entryMeta = document.createElement("p");
+    entryMeta.className = "latest-entry-meta";
+    const date = document.createElement("span");
+    date.textContent = `LAST ENTRY · ${formatEntryDate(latest.date)}`;
+    const hint = document.createElement("span");
+    hint.className = "latest-entry-meta__hint";
+    hint.textContent = "HOLD VALUE TO EDIT";
+    entryMeta.append(date, hint);
+    heroWrap.append(entryMeta);
+  }
   return heroWrap;
 }
 
@@ -1007,12 +1043,37 @@ function renderEditorHeader(titleText: string, context: string, titleFlipId: str
   return header;
 }
 
+function renderEntryValueHeader(
+  valueText: string,
+  titleFlipId: string,
+  accent: boolean,
+  unitSuffix: string,
+): HTMLElement {
+  const header = document.createElement("header");
+  header.className = "view-header view-header--entry-value";
+  header.dataset.motionLayer = "header";
+
+  const title = document.createElement("h1");
+  title.id = "editor-title";
+  title.className = accent
+    ? "view-header__title entry-editor-value entry-editor-value--accent"
+    : "view-header__title entry-editor-value";
+  title.dataset.modalTitleId = titleFlipId;
+  title.dataset.entryEditorValue = "true";
+  title.dataset.entryValueSuffix = unitSuffix;
+  title.textContent = valueText;
+
+  header.append(title);
+  return header;
+}
+
 function renderEditorSurface(
   viewClass: string,
   titleText: string,
   context: string,
   flipId: string,
   form: HTMLFormElement,
+  customHeader?: HTMLElement,
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = `${viewClass} editor-view app-view`;
@@ -1025,7 +1086,10 @@ function renderEditorSurface(
   modal.dataset.flipId = flipId;
   modal.dataset.motionLayer = "local";
   form.dataset.modalReveal = "true";
-  modal.append(renderEditorHeader(titleText, context, `${flipId}-title`), form);
+  modal.append(
+    customHeader ?? renderEditorHeader(titleText, context, `${flipId}-title`),
+    form,
+  );
   section.append(modal);
   return section;
 }
@@ -1098,12 +1162,27 @@ function renderEntryView(state: AppState): HTMLElement {
 
 function renderEntryEditView(entry: Entry, record: Record): HTMLElement {
   const form = renderEntryEditForm(entry, record);
+  const isLatest = latestEntry(record)?.id === entry.id;
+  const flipId = `entry-edit-${record.id}-${entry.id}`;
+  const formattedValue = isLatest
+    ? formatValueForUnit(entry.value, record.unit)
+    : formatValueWithUnit(entry.value, record.unit);
+  const unitSuffix = isLatest || valueIncludesUnit(record.unit)
+    ? ""
+    : ` ${normalizedUnit(record.unit)}`;
+  const header = renderEntryValueHeader(
+    formattedValue,
+    `${flipId}-title`,
+    isLatest,
+    unitSuffix,
+  );
   const section = renderEditorSurface(
     "entry-editor-view",
-    "Edit entry",
-    `${record.name} · ${record.unit}`,
-    `entry-edit-${record.id}-${entry.id}`,
+    formattedValue,
+    "",
+    flipId,
     form,
+    header,
   );
   section.dataset.entryEditor = "true";
   return section;
@@ -1796,4 +1875,5 @@ export const VIEW_ATTRS = {
   startRoutine: "data-start-routine",
   skipCapture: "data-skip-capture",
   quickValue: "data-quick-value",
+  latestEntryEdit: "data-latest-entry-edit",
 } as const;

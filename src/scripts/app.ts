@@ -19,7 +19,12 @@
  */
 
 import { flushSave, loadState, normalize, saveState } from "./persistence";
-import { attachGestures, attachRowSwipe, type GestureHandlers } from "./gestures";
+import {
+  attachGestures,
+  attachLongPress,
+  attachRowSwipe,
+  type GestureHandlers,
+} from "./gestures";
 import {
   animateInitialView,
   celebrate,
@@ -84,8 +89,14 @@ function currentIndex(state: AppState): number {
   return state.records.findIndex((r) => r.id === state.currentRecordId);
 }
 
+function requestEntryEdit(entryId: string): void {
+  document.dispatchEvent(
+    new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
+  );
+}
+
 function focusEntryRow(entryId: string): void {
-  const row = [...document.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`)]
+  const row = [...document.querySelectorAll<HTMLElement>(`[${VIEW_ATTRS.entryId}]`)]
     .find((candidate) => candidate.dataset.entryId === entryId);
   if (row !== undefined) {
     row.focus({ preventScroll: true });
@@ -277,21 +288,40 @@ function wire(root: HTMLElement): void {
     attachRowSwipe(row, {
       onDelete: () => deleteEntry(entryId),
     });
-    // Tap → edit. Dispatch the custom event; the listener in init() changes
-    // the top-level view to the contextual entry editor.
-    row.addEventListener("click", () => {
-      document.dispatchEvent(
-        new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
-      );
-    });
+    // Tap → edit. The listener in init() opens the contextual modal while
+    // preserving the row-to-surface shared transition.
+    row.addEventListener("click", () => requestEntryEdit(entryId));
     row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      document.dispatchEvent(
-        new CustomEvent("rec-ord:edit-entry", { detail: { entryId } }),
-      );
+      requestEntryEdit(entryId);
     });
   });
+
+  const latestEntryEdit = root.querySelector<HTMLElement>(
+    `[${VIEW_ATTRS.latestEntryEdit}]`,
+  );
+  if (latestEntryEdit !== null) {
+    const entryId = latestEntryEdit.getAttribute(VIEW_ATTRS.entryId);
+    if (entryId !== null) {
+      attachLongPress(latestEntryEdit, {
+        onLongPress: () => {
+          requestEntryEdit(entryId);
+          return true;
+        },
+      });
+      latestEntryEdit.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        requestEntryEdit(entryId);
+      });
+      latestEntryEdit.addEventListener("click", (event) => {
+        // Assistive technologies activate custom button roles with a
+        // synthetic click. Pointer users keep the deliberate hold gesture.
+        if (event.detail === 0) requestEntryEdit(entryId);
+      });
+    }
+  }
 
   // Contextual entry modal: submit → save, cancel → return to focus.
   const editEntryForm = root.querySelector<HTMLFormElement>(
@@ -1107,7 +1137,6 @@ function openGrid(): boolean {
   void commit(() => {
     setState({
       view: "grid",
-      activeRoutineId: routine?.id ?? null,
       activeTagFilter: null,
       editingEntryId: null,
       captureSession: null,
@@ -1275,7 +1304,7 @@ function init(): void {
     expanded: false,
     editingEntryId: null,
     activeTagFilter: null,
-    activeRoutineId: null,
+    activeRoutineId: loaded.activeRoutineId,
     captureSession: null,
   };
   initState(initial);
@@ -1326,7 +1355,12 @@ function init(): void {
   // Persist + perform the plain DOM update on every state change. View
   // actions wrap their mutation in `commit`, which owns the animation.
   const unsub = subscribe((state) => {
-    saveState(state.records, state.currentRecordId, state.routineConfig);
+    saveState(
+      state.records,
+      state.currentRecordId,
+      state.routineConfig,
+      state.activeRoutineId,
+    );
     updateDOM();
   });
   cleanups.push(unsub);

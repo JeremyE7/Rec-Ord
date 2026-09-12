@@ -451,6 +451,81 @@ function gsapClamp(value: number): number {
   );
 }
 
+export interface LongPressHandlers {
+  onLongPress: () => boolean | void;
+}
+
+/** Adds a hold gesture to a contextual target without taking over scrolling.
+ * Movement cancels the hold. The target is deliberately not transformed
+ * because it can be the source geometry captured by a modal FLIP transition. */
+export function attachLongPress(
+  target: HTMLElement,
+  handlers: LongPressHandlers,
+): () => void {
+  const controller = new AbortController();
+  const listenerOptions = { signal: controller.signal };
+  let pointerId: number | null = null;
+  let startX = 0;
+  let startY = 0;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let suppressClick = false;
+
+  const cancel = (): void => {
+    if (longPressTimer !== null) clearTimeout(longPressTimer);
+    longPressTimer = null;
+    pointerId = null;
+  };
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (pointerId !== null) return;
+    pointerId = event.pointerId;
+    suppressClick = false;
+    startX = event.clientX;
+    startY = event.clientY;
+
+    longPressTimer = setTimeout(() => {
+      if (pointerId !== event.pointerId) return;
+      longPressTimer = null;
+      const committed = handlers.onLongPress() === true;
+      suppressClick = committed;
+      if (committed) haptic();
+    }, gestureMotion.longPressDelay);
+  };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (pointerId !== event.pointerId) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > gestureMotion.longPressMoveTolerance) {
+      cancel();
+    }
+  };
+
+  const onPointerEnd = (event: PointerEvent): void => {
+    if (pointerId !== event.pointerId) return;
+    cancel();
+  };
+
+  const onClick = (event: MouseEvent): void => {
+    if (!suppressClick) return;
+    suppressClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+
+  target.addEventListener("pointerdown", onPointerDown, listenerOptions);
+  target.addEventListener("pointermove", onPointerMove, listenerOptions);
+  target.addEventListener("pointerup", onPointerEnd, listenerOptions);
+  target.addEventListener("pointercancel", onPointerEnd, listenerOptions);
+  target.addEventListener("click", onClick, { ...listenerOptions, capture: true });
+
+  return () => {
+    cancel();
+    controller.abort();
+  };
+}
+
 export interface RowSwipeHandlers {
   onDelete: () => void;
 }

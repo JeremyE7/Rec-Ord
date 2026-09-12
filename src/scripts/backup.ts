@@ -254,10 +254,23 @@ function sanitizePersistedState(value: unknown): PersistedState {
     throw new BackupValidationError("The focused record does not exist in the backup.");
   }
 
+  const routineConfig = sanitizeRoutineConfig(value.routineConfig);
+  const activeRoutineId = value.activeRoutineId ?? null;
+  if (activeRoutineId !== null && typeof activeRoutineId !== "string") {
+    throw new BackupValidationError("The active routine ID is invalid.");
+  }
+  if (
+    typeof activeRoutineId === "string" &&
+    !routineConfig.profiles.some((profile) => profile.id === activeRoutineId)
+  ) {
+    throw new BackupValidationError("The active routine does not exist in the backup.");
+  }
+
   return {
     records,
     currentRecordId,
-    routineConfig: sanitizeRoutineConfig(value.routineConfig),
+    routineConfig,
+    activeRoutineId,
   };
 }
 

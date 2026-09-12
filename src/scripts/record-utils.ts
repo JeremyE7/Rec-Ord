@@ -89,6 +89,19 @@ function calendarDayNumber(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
 }
 
+export function formatEntryDate(iso: string): string {
+  const date = parseLocalDate(iso);
+  if (Number.isNaN(date.getTime())) return iso.toUpperCase();
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+    .format(date)
+    .toUpperCase();
+}
+
 export function formatRelativeDate(iso: string, now: Date = new Date()): string {
   const date = parseLocalDate(iso);
   if (Number.isNaN(date.getTime())) return iso.toUpperCase();

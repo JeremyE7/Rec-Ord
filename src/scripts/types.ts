@@ -74,8 +74,9 @@ export type View = "focus" | "new" | "grid" | "entry" | "record-settings";
 /**
  * Full client-side app state.
  *
- * Persisted (records + currentRecordId): the user's data.
- * Resets on reload (view, expanded, editingEntryId): clean reopen behavior.
+ * Persisted (records + currentRecordId + routineConfig + activeRoutineId):
+ * the user's data and last routine choice. Resets on reload (view, expanded,
+ * editingEntryId, captureSession): clean reopen behavior.
  */
 export interface AppState {
   records: Record[]; // ordered newest-record-first (records[0] = most recently created)
@@ -85,7 +86,7 @@ export interface AppState {
   expanded: boolean; // long-press edit expansion of the current focus card
   editingEntryId: string | null; // entry being edited in the contextual modal surface
   activeTagFilter?: string | null; // transient grid filter; null = no filter (not persisted)
-  activeRoutineId: string | null; // transient routine filter; null = all records
+  activeRoutineId: string | null; // persisted routine filter; null = all records
   captureSession: CaptureSession | null; // transient LOG TODAY queue
 }
 
@@ -94,4 +95,5 @@ export interface PersistedState {
   records: Record[];
   currentRecordId: string | null;
   routineConfig: RoutineConfig; // normalized; legacy payloads are upgraded on load
+  activeRoutineId: string | null; // last chosen routine; null = all records
 }

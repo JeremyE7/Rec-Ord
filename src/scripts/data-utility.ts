@@ -257,6 +257,7 @@ function persistedState(): PersistedState {
     records: state.records,
     currentRecordId: state.currentRecordId,
     routineConfig: state.routineConfig,
+    activeRoutineId: state.activeRoutineId,
   };
 }
 
@@ -269,7 +270,7 @@ function replaceState(data: PersistedState): boolean {
     view: "focus",
     expanded: false,
     editingEntryId: null,
-    activeRoutineId: null,
+    activeRoutineId: restored.activeRoutineId,
     activeTagFilter: null,
     captureSession: null,
   });
@@ -428,8 +429,15 @@ function initializeDataUtility(): void {
   const updateRoutineConfig = (
     updater: (config: ReturnType<typeof normalizeRoutineConfig>) => ReturnType<typeof normalizeRoutineConfig>,
   ): void => {
-    const next = updater(getState().routineConfig);
-    setState({ routineConfig: normalizeRoutineConfig(next) });
+    const state = getState();
+    const routineConfig = normalizeRoutineConfig(updater(state.routineConfig));
+    const activeRoutineStillExists =
+      state.activeRoutineId === null ||
+      routineConfig.profiles.some((profile) => profile.id === state.activeRoutineId);
+    setState({
+      routineConfig,
+      ...(activeRoutineStillExists ? {} : { activeRoutineId: null }),
+    });
   };
 
   const renderRoutineEditor = (profile: RoutineProfile): HTMLElement => {
