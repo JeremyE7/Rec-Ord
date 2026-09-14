@@ -25,12 +25,7 @@ import {
   attachRowSwipe,
   type GestureHandlers,
 } from "./gestures";
-import {
-  animateInitialView,
-  celebrate,
-  commit,
-  disposeMotion,
-} from "./motion";
+import { animateInitialView, celebrate, commit, disposeMotion } from "./motion";
 import {
   isNewBest,
   latestEntry,
@@ -96,14 +91,16 @@ function requestEntryEdit(entryId: string): void {
 }
 
 function focusEntryRow(entryId: string): void {
-  const row = [...document.querySelectorAll<HTMLElement>(`[${VIEW_ATTRS.entryId}]`)]
-    .find((candidate) => candidate.dataset.entryId === entryId);
+  const row = [
+    ...document.querySelectorAll<HTMLElement>(`[${VIEW_ATTRS.entryId}]`),
+  ].find((candidate) => candidate.dataset.entryId === entryId);
   if (row !== undefined) {
     row.focus({ preventScroll: true });
     return;
   }
 
-  document.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
+  document
+    .querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
     ?.focus({ preventScroll: true });
 }
 
@@ -113,7 +110,9 @@ function filteredRecords(state: AppState): Record[] {
     return state.records.filter((r) => (r.tags ?? []).includes(tagFilter));
   }
   const routine = routineById(state.routineConfig, state.activeRoutineId);
-  return routine === null ? state.records : recordsForRoutine(state.records, routine);
+  return routine === null
+    ? state.records
+    : recordsForRoutine(state.records, routine);
 }
 
 function currentRoutine(state: AppState): ReturnType<typeof routineById> {
@@ -141,7 +140,9 @@ function announceDeletionFailure(): void {
 }
 
 function announceRestoreResult(detail: RestoreDeletedResultDetail): void {
-  document.dispatchEvent(new CustomEvent(RESTORE_DELETED_RESULT_EVENT, { detail }));
+  document.dispatchEvent(
+    new CustomEvent(RESTORE_DELETED_RESULT_EVENT, { detail }),
+  );
 }
 
 /* ---------------------------------------------------------------------------
@@ -177,40 +178,54 @@ function rerender(): void {
 
 function wire(root: HTMLElement): void {
   // Forms: new-record + contextual entry/settings editors
-  const newRecordForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.newRecordForm}]`);
+  const newRecordForm = root.querySelector<HTMLFormElement>(
+    `[${VIEW_ATTRS.newRecordForm}]`,
+  );
   if (newRecordForm !== null) {
     newRecordForm.addEventListener("submit", onNewRecordSubmit);
   }
 
-  const addEntryForm = root.querySelector<HTMLFormElement>(`[${VIEW_ATTRS.addEntryForm}]`);
+  const addEntryForm = root.querySelector<HTMLFormElement>(
+    `[${VIEW_ATTRS.addEntryForm}]`,
+  );
   if (addEntryForm !== null) {
     addEntryForm.addEventListener("submit", onAddEntrySubmit);
   }
 
   // Unit preset picker (inside the new-record form)
-  const unitPresets = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.unitPreset}]`);
+  const unitPresets = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.unitPreset}]`,
+  );
   unitPresets.forEach((btn) => {
     btn.addEventListener("click", onUnitPresetClick);
   });
 
   // Direction toggle (inside the new-record form)
-  const directionButtons = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.direction}]`);
+  const directionButtons = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.direction}]`,
+  );
   directionButtons.forEach((btn) => {
     btn.addEventListener("click", onDirectionClick);
   });
 
   // ADD ENTRY action (expanded focus → contextual modal surface)
-  const newEntryToggle = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`);
+  const newEntryToggle = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.newEntryToggle}]`,
+  );
   if (newEntryToggle !== null) {
     newEntryToggle.addEventListener("click", onNewEntryToggleClick);
   }
 
-  const repeatBtn = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.repeatEntry}]`);
+  const repeatBtn = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.repeatEntry}]`,
+  );
   if (repeatBtn !== null) {
     repeatBtn.addEventListener("click", onRepeatEntryClick);
   }
 
-  const tagFilterBtns = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.tagFilter}]`);
+  const tagFilterBtns = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.tagFilter}]`,
+  );
   tagFilterBtns.forEach((btn) => {
     btn.addEventListener("click", onTagFilterClick);
   });
@@ -222,24 +237,32 @@ function wire(root: HTMLElement): void {
     btn.addEventListener("click", onRoutineFilterClick);
   });
 
-  const routineOpen = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.routineOpen}]`);
+  const routineOpen = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.routineOpen}]`,
+  );
   if (routineOpen !== null) {
     routineOpen.addEventListener("click", () => {
       document.dispatchEvent(new CustomEvent("rec-ord:open-routines"));
     });
   }
 
-  const startRoutine = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.startRoutine}]`);
+  const startRoutine = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.startRoutine}]`,
+  );
   if (startRoutine !== null) {
     startRoutine.addEventListener("click", onStartRoutineClick);
   }
 
-  const skipCapture = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.skipCapture}]`);
+  const skipCapture = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.skipCapture}]`,
+  );
   if (skipCapture !== null) {
     skipCapture.addEventListener("click", onSkipCaptureClick);
   }
 
-  const quickValueBtns = root.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.quickValue}]`);
+  const quickValueBtns = root.querySelectorAll<HTMLButtonElement>(
+    `[${VIEW_ATTRS.quickValue}]`,
+  );
   quickValueBtns.forEach((btn) => {
     btn.addEventListener("click", onQuickValueClick);
   });
@@ -266,7 +289,9 @@ function wire(root: HTMLElement): void {
   });
 
   // DELETE RECORD two-tap
-  const deleteBtn = root.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.deleteRecord}]`);
+  const deleteBtn = root.querySelector<HTMLButtonElement>(
+    `[${VIEW_ATTRS.deleteRecord}]`,
+  );
   if (deleteBtn !== null) {
     deleteBtn.addEventListener("click", onDeleteRecordClick);
   }
@@ -281,7 +306,9 @@ function wire(root: HTMLElement): void {
   });
 
   // Entry rows: swipe-to-delete + tap-to-edit in a contextual modal
-  const rows = root.querySelectorAll<HTMLLIElement>(`li[${VIEW_ATTRS.entryRow}]`);
+  const rows = root.querySelectorAll<HTMLLIElement>(
+    `li[${VIEW_ATTRS.entryRow}]`,
+  );
   rows.forEach((row) => {
     const entryId = row.getAttribute(VIEW_ATTRS.entryId);
     if (entryId === null) return;
@@ -330,7 +357,6 @@ function wire(root: HTMLElement): void {
   if (editEntryForm !== null) {
     editEntryForm.addEventListener("submit", onEditEntrySubmit);
   }
-
 }
 
 /* ---------------------------------------------------------------------------
@@ -340,9 +366,17 @@ function wire(root: HTMLElement): void {
 /** Toggles the active visual state on a group of pill buttons (the
  *  preset row or the direction toggle). The button matching `active`
  *  gets the accent classes; the others get the muted classes. */
-function setActivePill(buttons: NodeListOf<HTMLButtonElement>, active: HTMLButtonElement): void {
+function setActivePill(
+  buttons: NodeListOf<HTMLButtonElement>,
+  active: HTMLButtonElement,
+): void {
   const ACTIVE = ["border-accent", "text-accent"] as const;
-  const INACTIVE = ["border-line", "text-ink-muted", "hover:text-ink", "hover:border-ink-muted"] as const;
+  const INACTIVE = [
+    "border-line",
+    "text-ink-muted",
+    "hover:text-ink",
+    "hover:border-ink-muted",
+  ] as const;
   buttons.forEach((b) => {
     const isActive = b === active;
     for (const cls of ACTIVE) b.classList.toggle(cls, isActive);
@@ -368,7 +402,9 @@ function onUnitPresetClick(e: MouseEvent): void {
     `[data-unit-presets], [aria-label="Unit preset"]`,
   );
   if (row !== null) {
-    const all = row.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.unitPreset}]`);
+    const all = row.querySelectorAll<HTMLButtonElement>(
+      `[${VIEW_ATTRS.unitPreset}]`,
+    );
     setActivePill(all, btn);
   }
 }
@@ -378,7 +414,9 @@ function onDirectionClick(e: MouseEvent): void {
   const direction = btn.getAttribute(VIEW_ATTRS.direction) ?? "";
   const form = btn.closest("form");
   if (form === null) return;
-  const hidden = form.querySelector<HTMLInputElement>('input[type="hidden"][name="direction"]');
+  const hidden = form.querySelector<HTMLInputElement>(
+    'input[type="hidden"][name="direction"]',
+  );
   if (hidden === null) return;
   hidden.value = direction;
   // Update the active highlight across the whole direction row.
@@ -386,7 +424,9 @@ function onDirectionClick(e: MouseEvent): void {
     `[data-direction-toggle], [aria-label="Direction"]`,
   );
   if (row !== null) {
-    const all = row.querySelectorAll<HTMLButtonElement>(`[${VIEW_ATTRS.direction}]`);
+    const all = row.querySelectorAll<HTMLButtonElement>(
+      `[${VIEW_ATTRS.direction}]`,
+    );
     setActivePill(all, btn);
   }
 }
@@ -397,7 +437,9 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   const data = new FormData(form);
   const name = String(data.get("name") ?? "").trim();
   const valueRaw = data.get("value");
-  const unit = String(data.get("unit") ?? "").trim().toUpperCase();
+  const unit = String(data.get("unit") ?? "")
+    .trim()
+    .toUpperCase();
   const date = String(data.get("date") ?? "");
   const quickStepRaw = String(data.get("quickStep") ?? "").trim();
   // Direction is stored in a hidden input. Empty string = no preference.
@@ -407,25 +449,36 @@ function onNewRecordSubmit(e: SubmitEvent): void {
   if (name === "" || unit === "" || date === "" || valueRaw === null) return;
   const value = Number(valueRaw);
   if (!Number.isFinite(value)) return;
-  const quickStep = quickStepRaw === "" ? undefined : normalizeQuickStep(Number(quickStepRaw));
+  const quickStep =
+    quickStepRaw === "" ? undefined : normalizeQuickStep(Number(quickStepRaw));
   if (quickStepRaw !== "" && quickStep === undefined) return;
 
   const firstEntry: Entry = makeEntry(value, date);
   const selectedTags = parseTagsInput(String(data.get("tags") ?? ""));
   const routine = currentRoutine(getState()) ?? todayRoutine(getState());
   const tags = selectedTags ?? routine?.tags;
-  const record: Record = makeRecord(name, unit, firstEntry, direction, tags, quickStep);
+  const record: Record = makeRecord(
+    name,
+    unit,
+    firstEntry,
+    direction,
+    tags,
+    quickStep,
+  );
   // New records go to the front (most recently created at index 0).
-  void commit(() => {
-    setState((prev) => ({
-      records: [record, ...prev.records],
-      currentRecordId: record.id,
-      view: "focus",
-      expanded: false,
-      editingEntryId: null,
-      captureSession: null,
-    }));
-  }, { type: "panel", direction: "out" });
+  void commit(
+    () => {
+      setState((prev) => ({
+        records: [record, ...prev.records],
+        currentRecordId: record.id,
+        view: "focus",
+        expanded: false,
+        editingEntryId: null,
+        captureSession: null,
+      }));
+    },
+    { type: "panel", direction: "out" },
+  );
 }
 
 function onAddEntrySubmit(e: SubmitEvent): void {
@@ -443,45 +496,55 @@ function onAddEntrySubmit(e: SubmitEvent): void {
   if (recordBefore === null) return;
   const session = before.captureSession;
   const sessionRecordId = captureSessionRecordId(session);
-  const isSessionEntry = session !== null && sessionRecordId === recordBefore.id;
+  const isSessionEntry =
+    session !== null && sessionRecordId === recordBefore.id;
   const nextSession = isSessionEntry ? advanceCaptureSession(session) : session;
-  const nextRecordId = isSessionEntry ? captureSessionRecordId(nextSession) : null;
+  const nextRecordId = isSessionEntry
+    ? captureSessionRecordId(nextSession)
+    : null;
   const continueSession = isSessionEntry && nextRecordId !== null;
 
   // Build the entry up front so we can reference its id after the
   // state update (for the PR-pulse check below).
   const newEntry: Entry = makeEntry(value, date);
 
-  const transition = commit(() => {
-    setState((prev) => {
-      const record = currentRecord(prev);
-      if (record === null) return prev;
-      const newEntries = sortEntries([newEntry, ...record.entries]);
-      const updated: Record = { ...record, entries: newEntries };
-      return {
-        records: prev.records.map((r) => (r.id === record.id ? updated : r)),
-        currentRecordId: continueSession ? nextRecordId : record.id,
-        view: isSessionEntry && continueSession ? "entry" : "focus",
-        expanded: continueSession ? true : isSessionEntry ? false : prev.expanded,
-        editingEntryId: null,
-        captureSession: isSessionEntry ? nextSession : prev.captureSession,
-      };
-    });
-  }, continueSession
-    ? { type: "fade" }
-    : { type: "modal", direction: "out" });
+  const transition = commit(
+    () => {
+      setState((prev) => {
+        const record = currentRecord(prev);
+        if (record === null) return prev;
+        const newEntries = sortEntries([newEntry, ...record.entries]);
+        const updated: Record = { ...record, entries: newEntries };
+        return {
+          records: prev.records.map((r) => (r.id === record.id ? updated : r)),
+          currentRecordId: continueSession ? nextRecordId : record.id,
+          view: isSessionEntry && continueSession ? "entry" : "focus",
+          expanded: continueSession
+            ? true
+            : isSessionEntry
+              ? false
+              : prev.expanded,
+          editingEntryId: null,
+          captureSession: isSessionEntry ? nextSession : prev.captureSession,
+        };
+      });
+    },
+    continueSession ? { type: "fade" } : { type: "modal", direction: "out" },
+  );
 
   if (continueSession) {
     void transition.then(() => {
-      document.querySelector<HTMLInputElement>(
-        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
-      )?.focus({ preventScroll: true });
+      document
+        .querySelector<HTMLInputElement>(
+          `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+        )
+        ?.focus({ preventScroll: true });
     });
   } else if (!isSessionEntry) {
     void transition.then(() => {
-      document.querySelector<HTMLButtonElement>(
-        `[${VIEW_ATTRS.newEntryToggle}]`,
-      )?.focus({ preventScroll: true });
+      document
+        .querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
+        ?.focus({ preventScroll: true });
     });
   }
 
@@ -490,7 +553,8 @@ function onAddEntrySubmit(e: SubmitEvent): void {
   // strictly beats every other entry in the record's direction, flash
   // the hero. No pulse when the record has no direction, when this was
   // the first entry, or when the value merely ties the previous best.
-  const updatedRecord = getState().records.find((record) => record.id === recordBefore.id) ?? null;
+  const updatedRecord =
+    getState().records.find((record) => record.id === recordBefore.id) ?? null;
   if (updatedRecord !== null) {
     const newLatest = latestEntry(updatedRecord);
     if (newLatest !== null && newLatest.id === newEntry.id) {
@@ -510,15 +574,20 @@ function onRepeatEntryClick(): void {
   const latest = latestEntry(record);
   if (latest === null) return;
   const newEntry: Entry = makeEntry(latest.value, todayISO());
-  const transition = commit(() => {
-    setState((prev) => {
-      const r = currentRecord(prev);
-      if (r === null) return prev;
-      const newEntries = sortEntries([newEntry, ...r.entries]);
-      const updated: Record = { ...r, entries: newEntries };
-      return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
-    });
-  }, { type: "fade" });
+  const transition = commit(
+    () => {
+      setState((prev) => {
+        const r = currentRecord(prev);
+        if (r === null) return prev;
+        const newEntries = sortEntries([newEntry, ...r.entries]);
+        const updated: Record = { ...r, entries: newEntries };
+        return {
+          records: prev.records.map((x) => (x.id === r.id ? updated : x)),
+        };
+      });
+    },
+    { type: "fade" },
+  );
   const updatedRecord = currentRecord(getState());
   if (updatedRecord !== null) {
     const newLatest = latestEntry(updatedRecord);
@@ -537,17 +606,35 @@ function onTagFilterClick(e: MouseEvent): void {
   const tag = btn.getAttribute(VIEW_ATTRS.tagFilter) ?? "";
   const next = tag === "" ? null : tag.toUpperCase();
   const state = getState();
-  const visible = next === null ? state.records : state.records.filter((r) => (r.tags ?? []).includes(next));
+  const visible =
+    next === null
+      ? state.records
+      : state.records.filter((r) => (r.tags ?? []).includes(next));
   // If the current record is not in the filtered set, jump to first filtered record.
-  const shouldJump = visible.length > 0 && (state.currentRecordId === null || !visible.some((r) => r.id === state.currentRecordId));
-  void commit(() => {
-    setState({
-      activeTagFilter: next,
-      activeRoutineId: null,
-      ...(shouldJump ? { currentRecordId: visible[0]!.id, view: "focus" as const, expanded: false, editingEntryId: null } : {}),
-      ...(next !== null && visible.length > 0 && state.view === "grid" ? {} : {}),
-    });
-  }, { type: "fade" });
+  const shouldJump =
+    visible.length > 0 &&
+    (state.currentRecordId === null ||
+      !visible.some((r) => r.id === state.currentRecordId));
+  void commit(
+    () => {
+      setState({
+        activeTagFilter: next,
+        activeRoutineId: null,
+        ...(shouldJump
+          ? {
+              currentRecordId: visible[0]!.id,
+              view: "focus" as const,
+              expanded: false,
+              editingEntryId: null,
+            }
+          : {}),
+        ...(next !== null && visible.length > 0 && state.view === "grid"
+          ? {}
+          : {}),
+      });
+    },
+    { type: "fade" },
+  );
   // If we are in grid, stay in grid to show filtered list; if we jumped, the grid will re-render filtered.
 }
 
@@ -561,23 +648,27 @@ function onRoutineFilterClick(e: MouseEvent): void {
   const visible = recordsForRoutine(state.records, routine);
   const shouldJump =
     visible.length > 0 &&
-    (state.currentRecordId === null || !visible.some((record) => record.id === state.currentRecordId));
+    (state.currentRecordId === null ||
+      !visible.some((record) => record.id === state.currentRecordId));
 
-  void commit(() => {
-    setState({
-      activeRoutineId: routine.id,
-      activeTagFilter: null,
-      captureSession: null,
-      ...(shouldJump
-        ? {
-            currentRecordId: visible[0]!.id,
-            view: "grid" as const,
-            expanded: false,
-            editingEntryId: null,
-          }
-        : {}),
-    });
-  }, { type: "fade" });
+  void commit(
+    () => {
+      setState({
+        activeRoutineId: routine.id,
+        activeTagFilter: null,
+        captureSession: null,
+        ...(shouldJump
+          ? {
+              currentRecordId: visible[0]!.id,
+              view: "grid" as const,
+              expanded: false,
+              editingEntryId: null,
+            }
+          : {}),
+      });
+    },
+    { type: "fade" },
+  );
 }
 
 function onStartRoutineClick(): void {
@@ -589,48 +680,62 @@ function onStartRoutineClick(): void {
   const firstRecordId = captureSessionRecordId(session);
   if (firstRecordId === null) return;
 
-  const transition = commit(() => {
-    setState({
-      activeRoutineId: routine.id,
-      activeTagFilter: null,
-      captureSession: session,
-      currentRecordId: firstRecordId,
-      view: "entry",
-      expanded: true,
-      editingEntryId: null,
-    });
-  }, { type: "modal", direction: "in" });
+  const transition = commit(
+    () => {
+      setState({
+        activeRoutineId: routine.id,
+        activeTagFilter: null,
+        captureSession: session,
+        currentRecordId: firstRecordId,
+        view: "entry",
+        expanded: true,
+        editingEntryId: null,
+      });
+    },
+    { type: "modal", direction: "in" },
+  );
 
   void transition.then(() => {
-    document.querySelector<HTMLInputElement>(
-      `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
-    )?.focus({ preventScroll: true });
+    document
+      .querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+      )
+      ?.focus({ preventScroll: true });
   });
 }
 
 function onSkipCaptureClick(): void {
   const state = getState();
   const session = state.captureSession;
-  if (session === null || captureSessionRecordId(session) !== state.currentRecordId) return;
+  if (
+    session === null ||
+    captureSessionRecordId(session) !== state.currentRecordId
+  )
+    return;
   const nextSession = advanceCaptureSession(session);
   const nextRecordId = captureSessionRecordId(nextSession);
   const continueSession = nextRecordId !== null;
 
-  const transition = commit(() => {
-    setState({
-      captureSession: nextSession,
-      currentRecordId: continueSession ? nextRecordId : state.currentRecordId,
-      view: continueSession ? "entry" : "focus",
-      expanded: continueSession,
-      editingEntryId: null,
-    });
-  }, { type: "record", direction: "up" });
+  const transition = commit(
+    () => {
+      setState({
+        captureSession: nextSession,
+        currentRecordId: continueSession ? nextRecordId : state.currentRecordId,
+        view: continueSession ? "entry" : "focus",
+        expanded: continueSession,
+        editingEntryId: null,
+      });
+    },
+    { type: "record", direction: "up" },
+  );
 
   if (continueSession) {
     void transition.then(() => {
-      document.querySelector<HTMLInputElement>(
-        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
-      )?.focus({ preventScroll: true });
+      document
+        .querySelector<HTMLInputElement>(
+          `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+        )
+        ?.focus({ preventScroll: true });
     });
   }
 }
@@ -654,33 +759,36 @@ function onRecordSettingsSubmit(e: SubmitEvent): void {
   const data = new FormData(form);
   const tags = parseTagsInput(String(data.get("tags") ?? ""));
   const quickStepRaw = String(data.get("quickStep") ?? "").trim();
-  const quickStep = quickStepRaw === ""
-    ? undefined
-    : normalizeQuickStep(Number(quickStepRaw));
-  if (tags === undefined || (quickStepRaw !== "" && quickStep === undefined)) return;
+  const quickStep =
+    quickStepRaw === "" ? undefined : normalizeQuickStep(Number(quickStepRaw));
+  if (tags === undefined || (quickStepRaw !== "" && quickStep === undefined))
+    return;
 
-  const transition = commit(() => {
-    setState((prev) => ({
-      records: prev.records.map((record) => {
-        if (record.id !== recordId) return record;
-        const next: Record = { ...record, tags };
-        if (quickStep === undefined) {
-          delete next.quickStep;
-        } else {
-          next.quickStep = quickStep;
-        }
-        return next;
-      }),
-      view: "focus",
-      expanded: true,
-      editingEntryId: null,
-    }));
-  }, { type: "modal", direction: "out" });
+  const transition = commit(
+    () => {
+      setState((prev) => ({
+        records: prev.records.map((record) => {
+          if (record.id !== recordId) return record;
+          const next: Record = { ...record, tags };
+          if (quickStep === undefined) {
+            delete next.quickStep;
+          } else {
+            next.quickStep = quickStep;
+          }
+          return next;
+        }),
+        view: "focus",
+        expanded: true,
+        editingEntryId: null,
+      }));
+    },
+    { type: "modal", direction: "out" },
+  );
 
   void transition.then(() => {
-    document.querySelector<HTMLButtonElement>(
-      `[${VIEW_ATTRS.recordSettingsOpen}]`,
-    )?.focus({ preventScroll: true });
+    document
+      .querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.recordSettingsOpen}]`)
+      ?.focus({ preventScroll: true });
   });
 }
 
@@ -708,23 +816,26 @@ function onEditEntrySubmit(e: SubmitEvent): void {
   const wasLatest = latestEntry(before)?.id === entryId;
   const valueChanged = oldEntry.value !== value;
 
-  const transition = commit(() => {
-    setState((prev) => {
-      const r = currentRecord(prev);
-      if (r === null) return prev;
-      const updatedEntries = r.entries.map((entry) =>
-        entry.id === entryId ? { ...entry, value, date } : entry,
-      );
-      const updated: Record = { ...r, entries: sortEntries(updatedEntries) };
-      return {
-        records: prev.records.map((x) => (x.id === r.id ? updated : x)),
-        view: "focus",
-        expanded: true,
-        editingEntryId: null,
-        captureSession: null,
-      };
-    });
-  }, { type: "modal", direction: "out" });
+  const transition = commit(
+    () => {
+      setState((prev) => {
+        const r = currentRecord(prev);
+        if (r === null) return prev;
+        const updatedEntries = r.entries.map((entry) =>
+          entry.id === entryId ? { ...entry, value, date } : entry,
+        );
+        const updated: Record = { ...r, entries: sortEntries(updatedEntries) };
+        return {
+          records: prev.records.map((x) => (x.id === r.id ? updated : x)),
+          view: "focus",
+          expanded: true,
+          editingEntryId: null,
+          captureSession: null,
+        };
+      });
+    },
+    { type: "modal", direction: "out" },
+  );
 
   void transition.then(() => {
     focusEntryRow(entryId);
@@ -752,24 +863,34 @@ function onEditEntrySubmit(e: SubmitEvent): void {
 function onNewEntryToggleClick(): void {
   const state = getState();
   if (state.view !== "focus" || !state.expanded) return;
-  void commit(() => {
-    setState({ view: "entry", editingEntryId: null });
-  }, { type: "modal", direction: "in" }).then(() => {
-    document.querySelector<HTMLInputElement>(
-      `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
-    )?.focus({ preventScroll: true });
+  void commit(
+    () => {
+      setState({ view: "entry", editingEntryId: null });
+    },
+    { type: "modal", direction: "in" },
+  ).then(() => {
+    document
+      .querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.addEntryForm}] input[name="value"]`,
+      )
+      ?.focus({ preventScroll: true });
   });
 }
 
 function onRecordSettingsOpen(): void {
   const state = getState();
   if (state.view !== "focus" || !state.expanded) return;
-  void commit(() => {
-    setState({ view: "record-settings", editingEntryId: null });
-  }, { type: "modal", direction: "in" }).then(() => {
-    document.querySelector<HTMLInputElement>(
-      `[${VIEW_ATTRS.recordSettingsForm}] input[name="tags"]`,
-    )?.focus({ preventScroll: true });
+  void commit(
+    () => {
+      setState({ view: "record-settings", editingEntryId: null });
+    },
+    { type: "modal", direction: "in" },
+  ).then(() => {
+    document
+      .querySelector<HTMLInputElement>(
+        `[${VIEW_ATTRS.recordSettingsForm}] input[name="tags"]`,
+      )
+      ?.focus({ preventScroll: true });
   });
 }
 
@@ -818,16 +939,19 @@ function performDeleteRecord(): void {
 
   // If it's the only record, the empty state is the destination.
   if (state.records.length === 1) {
-    void commit(() => {
-      setState({
-        records: [],
-        currentRecordId: null,
-        view: "focus",
-        expanded: false,
-        editingEntryId: null,
-        captureSession: null,
-      });
-    }, { type: "record", direction: "up" });
+    void commit(
+      () => {
+        setState({
+          records: [],
+          currentRecordId: null,
+          view: "focus",
+          expanded: false,
+          editingEntryId: null,
+          captureSession: null,
+        });
+      },
+      { type: "record", direction: "up" },
+    );
     announceDeletion(deletedItem);
     return;
   }
@@ -838,16 +962,19 @@ function performDeleteRecord(): void {
   const neighbor = state.records[idx - 1] ?? state.records[idx + 1] ?? null;
 
   const direction = neighbor === state.records[idx - 1] ? "down" : "up";
-  void commit(() => {
-    setState({
-      records: state.records.filter((r) => r.id !== record.id),
-      currentRecordId: neighbor ? neighbor.id : null,
-      view: "focus",
-      expanded: false,
-      editingEntryId: null,
-      captureSession: null,
-    });
-  }, { type: "record", direction });
+  void commit(
+    () => {
+      setState({
+        records: state.records.filter((r) => r.id !== record.id),
+        currentRecordId: neighbor ? neighbor.id : null,
+        view: "focus",
+        expanded: false,
+        editingEntryId: null,
+        captureSession: null,
+      });
+    },
+    { type: "record", direction },
+  );
   announceDeletion(deletedItem);
 }
 
@@ -870,14 +997,22 @@ function deleteEntry(entryId: string): void {
     announceDeletionFailure();
     return;
   }
-  void commit(() => {
-    setState((prev) => {
-      const r = currentRecord(prev);
-      if (r === null) return prev;
-      const updated: Record = { ...r, entries: r.entries.filter((e) => e.id !== entryId) };
-      return { records: prev.records.map((x) => (x.id === r.id ? updated : x)) };
-    });
-  }, { type: "fade" });
+  void commit(
+    () => {
+      setState((prev) => {
+        const r = currentRecord(prev);
+        if (r === null) return prev;
+        const updated: Record = {
+          ...r,
+          entries: r.entries.filter((e) => e.id !== entryId),
+        };
+        return {
+          records: prev.records.map((x) => (x.id === r.id ? updated : x)),
+        };
+      });
+    },
+    { type: "fade" },
+  );
   announceDeletion(deletedItem);
 }
 
@@ -904,17 +1039,24 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
       return;
     }
     const records = [...before.records];
-    records.splice(Math.min(item.originalIndex, records.length), 0, item.record);
-    transition = commit(() => {
-      setState({
-        records,
-        currentRecordId: item.record.id,
-        view: "focus",
-        expanded: detail.source === "immediate",
-        editingEntryId: null,
-        captureSession: null,
-      });
-    }, { type: "record", direction: "down" });
+    records.splice(
+      Math.min(item.originalIndex, records.length),
+      0,
+      item.record,
+    );
+    transition = commit(
+      () => {
+        setState({
+          records,
+          currentRecordId: item.record.id,
+          view: "focus",
+          expanded: detail.source === "immediate",
+          editingEntryId: null,
+          captureSession: null,
+        });
+      },
+      { type: "record", direction: "down" },
+    );
   } else {
     const parent = before.records.find((record) => record.id === item.recordId);
     if (parent === undefined) {
@@ -936,18 +1078,21 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
     const entries = [...parent.entries];
     entries.splice(Math.min(item.originalIndex, entries.length), 0, item.entry);
     const restored: Record = { ...parent, entries: sortEntries(entries) };
-    transition = commit(() => {
-      setState({
-        records: before.records.map((record) =>
-          record.id === restored.id ? restored : record,
-        ),
-        currentRecordId: restored.id,
-        view: "focus",
-        expanded: detail.source === "immediate",
-        editingEntryId: null,
-        captureSession: null,
-      });
-    }, { type: "fade" });
+    transition = commit(
+      () => {
+        setState({
+          records: before.records.map((record) =>
+            record.id === restored.id ? restored : record,
+          ),
+          currentRecordId: restored.id,
+          view: "focus",
+          expanded: detail.source === "immediate",
+          editingEntryId: null,
+          captureSession: null,
+        });
+      },
+      { type: "fade" },
+    );
   }
 
   if (!flushSave()) {
@@ -966,7 +1111,9 @@ function restoreDeletedItem(detail: RestoreDeletedDetail): void {
   announceRestoreResult({
     ...detail,
     success: true,
-    message: removed ? "ITEM RESTORED" : "ITEM RESTORED · RECOVERY COPY REMAINS",
+    message: removed
+      ? "ITEM RESTORED"
+      : "ITEM RESTORED · RECOVERY COPY REMAINS",
   });
 }
 
@@ -987,16 +1134,22 @@ function goToNextRecord(velocity?: number): boolean {
   const idx = list.findIndex((r) => r.id === state.currentRecordId);
   if (idx === -1) {
     if (list.length === 0) return false;
-    void commit(() => {
-      setState({ currentRecordId: list[0]!.id });
-    }, { type: "record", direction: "up", velocity });
+    void commit(
+      () => {
+        setState({ currentRecordId: list[0]!.id });
+      },
+      { type: "record", direction: "up", velocity },
+    );
     return true;
   }
   const next = list[idx + 1];
   if (!next) return false; // last/oldest — spring back
-  void commit(() => {
-    setState({ currentRecordId: next.id });
-  }, { type: "record", direction: "up", velocity });
+  void commit(
+    () => {
+      setState({ currentRecordId: next.id });
+    },
+    { type: "record", direction: "up", velocity },
+  );
   return true;
 }
 
@@ -1005,25 +1158,38 @@ function goToPreviousRecord(velocity?: number): boolean {
   if (state.view !== "focus") return false;
   if (state.expanded) {
     // Collapse edit.
-    void commit(() => {
-      setState({ expanded: false, editingEntryId: null, captureSession: null });
-    }, { type: "expand", direction: "out" });
+    void commit(
+      () => {
+        setState({
+          expanded: false,
+          editingEntryId: null,
+          captureSession: null,
+        });
+      },
+      { type: "expand", direction: "out" },
+    );
     return true;
   }
   const list = filteredRecords(state);
   const idx = list.findIndex((r) => r.id === state.currentRecordId);
   if (idx === -1) {
     if (list.length === 0) return false;
-    void commit(() => {
-      setState({ currentRecordId: list[list.length - 1]!.id });
-    }, { type: "record", direction: "down", velocity });
+    void commit(
+      () => {
+        setState({ currentRecordId: list[list.length - 1]!.id });
+      },
+      { type: "record", direction: "down", velocity },
+    );
     return true;
   }
   const prev = list[idx - 1];
   if (!prev) return false; // first/newest — spring back
-  void commit(() => {
-    setState({ currentRecordId: prev.id });
-  }, { type: "record", direction: "down", velocity });
+  void commit(
+    () => {
+      setState({ currentRecordId: prev.id });
+    },
+    { type: "record", direction: "down", velocity },
+  );
   return true;
 }
 
@@ -1033,18 +1199,24 @@ function openNewRecord(velocity?: number): boolean {
   // user is in "edit mode" — horizontal swipes are intentionally blocked
   // by the gesture handler so the only way out is swipe-down.
   if (state.view !== "focus" || state.expanded) return false;
-  void commit(() => {
-    setState({ view: "new", editingEntryId: null, captureSession: null });
-  }, { type: "panel", direction: "in", velocity });
+  void commit(
+    () => {
+      setState({ view: "new", editingEntryId: null, captureSession: null });
+    },
+    { type: "panel", direction: "in", velocity },
+  );
   return true;
 }
 
 function closeNewRecord(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "new") return false;
-  void commit(() => {
-    setState({ view: "focus", editingEntryId: null, captureSession: null });
-  }, { type: "panel", direction: "out", velocity });
+  void commit(
+    () => {
+      setState({ view: "focus", editingEntryId: null, captureSession: null });
+    },
+    { type: "panel", direction: "out", velocity },
+  );
   return true;
 }
 
@@ -1053,19 +1225,23 @@ function closeEntryEditor(velocity?: number): boolean {
   if (state.view !== "entry") return false;
   const entryId = state.editingEntryId;
   const keepExpanded = state.captureSession === null && state.expanded;
-  void commit(() => {
-    setState({
-      view: "focus",
-      expanded: keepExpanded,
-      editingEntryId: null,
-      captureSession: null,
-    });
-  }, { type: "modal", direction: "out", velocity }).then(() => {
+  void commit(
+    () => {
+      setState({
+        view: "focus",
+        expanded: keepExpanded,
+        editingEntryId: null,
+        captureSession: null,
+      });
+    },
+    { type: "modal", direction: "out", velocity },
+  ).then(() => {
     if (entryId !== null) {
       focusEntryRow(entryId);
       return;
     }
-    document.querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
+    document
+      .querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.newEntryToggle}]`)
       ?.focus({ preventScroll: true });
   });
   return true;
@@ -1074,16 +1250,19 @@ function closeEntryEditor(velocity?: number): boolean {
 function closeRecordSettings(velocity?: number): boolean {
   const state = getState();
   if (state.view !== "record-settings") return false;
-  void commit(() => {
-    setState({
-      view: "focus",
-      expanded: true,
-      editingEntryId: null,
-    });
-  }, { type: "modal", direction: "out", velocity }).then(() => {
-    document.querySelector<HTMLButtonElement>(
-      `[${VIEW_ATTRS.recordSettingsOpen}]`,
-    )?.focus({ preventScroll: true });
+  void commit(
+    () => {
+      setState({
+        view: "focus",
+        expanded: true,
+        editingEntryId: null,
+      });
+    },
+    { type: "modal", direction: "out", velocity },
+  ).then(() => {
+    document
+      .querySelector<HTMLButtonElement>(`[${VIEW_ATTRS.recordSettingsOpen}]`)
+      ?.focus({ preventScroll: true });
   });
   return true;
 }
@@ -1092,18 +1271,24 @@ function toggleEdit(): boolean {
   const state = getState();
   if (state.view !== "focus" || state.expanded) return false;
   if (state.records.length === 0) return false;
-  void commit(() => {
-    setState({ expanded: true, editingEntryId: null });
-  }, { type: "expand", direction: "in" });
+  void commit(
+    () => {
+      setState({ expanded: true, editingEntryId: null });
+    },
+    { type: "expand", direction: "in" },
+  );
   return true;
 }
 
 function collapseEdit(): boolean {
   const state = getState();
   if (!state.expanded) return false;
-  void commit(() => {
-    setState({ expanded: false, editingEntryId: null, captureSession: null });
-  }, { type: "expand", direction: "out" });
+  void commit(
+    () => {
+      setState({ expanded: false, editingEntryId: null, captureSession: null });
+    },
+    { type: "expand", direction: "out" },
+  );
   return true;
 }
 
@@ -1112,15 +1297,18 @@ function focusGridRecord(recordId: string): boolean {
   if (state.view !== "grid") return false;
   if (!state.records.some((record) => record.id === recordId)) return false;
 
-  void commit(() => {
-    setState({
-      view: "focus",
-      currentRecordId: recordId,
-      expanded: false,
-      editingEntryId: null,
-      captureSession: null,
-    });
-  }, { type: "grid", direction: "in" });
+  void commit(
+    () => {
+      setState({
+        view: "focus",
+        currentRecordId: recordId,
+        expanded: false,
+        editingEntryId: null,
+        captureSession: null,
+      });
+    },
+    { type: "grid", direction: "in" },
+  );
   return true;
 }
 
@@ -1132,16 +1320,19 @@ function onGridRecordClick(event: MouseEvent): void {
 
 function openGrid(): boolean {
   const state = getState();
-  if (state.view !== "focus" || state.expanded || state.records.length === 0) return false;
-  const routine = todayRoutine(state);
-  void commit(() => {
-    setState({
-      view: "grid",
-      activeTagFilter: null,
-      editingEntryId: null,
-      captureSession: null,
-    });
-  }, { type: "grid", direction: "out" });
+  if (state.view !== "focus" || state.expanded || state.records.length === 0)
+    return false;
+  void commit(
+    () => {
+      setState({
+        view: "grid",
+        activeTagFilter: null,
+        editingEntryId: null,
+        captureSession: null,
+      });
+    },
+    { type: "grid", direction: "out" },
+  );
   return true;
 }
 
@@ -1222,17 +1413,17 @@ function onKeyDown(e: KeyboardEvent): void {
       handled = toggleEdit();
       break;
     case "Escape": {
-       // Contextual back: editor/grid/expanded surface → focus.
-       const state = getState();
-       if (state.view === "grid") {
-         handled = closeGrid();
-       } else if (state.view === "new") {
-         handled = closeNewRecord();
-       } else if (state.view === "entry") {
-         handled = closeEntryEditor();
-       } else if (state.view === "record-settings") {
-         handled = closeRecordSettings();
-       } else if (state.expanded) {
+      // Contextual back: editor/grid/expanded surface → focus.
+      const state = getState();
+      if (state.view === "grid") {
+        handled = closeGrid();
+      } else if (state.view === "new") {
+        handled = closeNewRecord();
+      } else if (state.view === "entry") {
+        handled = closeEntryEditor();
+      } else if (state.view === "record-settings") {
+        handled = closeRecordSettings();
+      } else if (state.expanded) {
         handled = collapseEdit();
       }
       break;
@@ -1384,22 +1575,33 @@ function init(): void {
     const state = getState();
     if (state.view !== "focus" || !state.expanded) return;
     const record = currentRecord(state);
-    if (record === null || !record.entries.some((entry) => entry.id === detail.entryId)) return;
-    void commit(() => {
-      setState({
-        view: "entry",
-        expanded: true,
-        editingEntryId: detail.entryId,
-        captureSession: null,
-      });
-    }, { type: "modal", direction: "in" }).then(() => {
-      document.querySelector<HTMLInputElement>(
-        `[${VIEW_ATTRS.entryEditForm}] input[name="value"]`,
-      )?.focus({ preventScroll: true });
+    if (
+      record === null ||
+      !record.entries.some((entry) => entry.id === detail.entryId)
+    )
+      return;
+    void commit(
+      () => {
+        setState({
+          view: "entry",
+          expanded: true,
+          editingEntryId: detail.entryId,
+          captureSession: null,
+        });
+      },
+      { type: "modal", direction: "in" },
+    ).then(() => {
+      document
+        .querySelector<HTMLInputElement>(
+          `[${VIEW_ATTRS.entryEditForm}] input[name="value"]`,
+        )
+        ?.focus({ preventScroll: true });
     });
   };
   document.addEventListener("rec-ord:edit-entry", onEditEntry);
-  cleanups.push(() => document.removeEventListener("rec-ord:edit-entry", onEditEntry));
+  cleanups.push(() =>
+    document.removeEventListener("rec-ord:edit-entry", onEditEntry),
+  );
 
   // New personal best feedback is owned by GSAP, so repeated events can
   // interrupt and clean up the previous celebration without layout shifts.
@@ -1409,7 +1611,9 @@ function init(): void {
     celebrate(hero);
   };
   document.addEventListener("rec-ord:pr-pulse", onPrPulse);
-  cleanups.push(() => document.removeEventListener("rec-ord:pr-pulse", onPrPulse));
+  cleanups.push(() =>
+    document.removeEventListener("rec-ord:pr-pulse", onPrPulse),
+  );
 
   const onRestoreDeleted = (event: Event): void => {
     const detail = (event as CustomEvent<RestoreDeletedDetail>).detail;
@@ -1417,7 +1621,9 @@ function init(): void {
     restoreDeletedItem(detail);
   };
   document.addEventListener(RESTORE_DELETED_EVENT, onRestoreDeleted);
-  cleanups.push(() => document.removeEventListener(RESTORE_DELETED_EVENT, onRestoreDeleted));
+  cleanups.push(() =>
+    document.removeEventListener(RESTORE_DELETED_EVENT, onRestoreDeleted),
+  );
 
   // Save any pending writes before the page unloads.
   const onPageHide = (): void => {
